@@ -11,6 +11,7 @@ pub fn next(self: *Tokenizer) ?Token {
         slash,
         single_comment,
         multi_comment,
+        literal_integer,
     } = .start;
     
     var token = Token { .start = self.index, .end = self.index, .tag = .end };
@@ -29,6 +30,9 @@ pub fn next(self: *Tokenizer) ?Token {
                 'a'...'z', 'A'...'Z', '_', => {
                     state = .identifier;
                     token.tag = .identifier;
+                },
+                '0'...'9' => {
+                    state = .literal_integer;
                 },
                 '/' => {
                     state = .slash;
@@ -63,8 +67,18 @@ pub fn next(self: *Tokenizer) ?Token {
                     self.index += 1;
                     break;
                 },
+                '.' => {
+                    token.tag = .period;
+                    self.index += 1;
+                    break;
+                },
                 '+' => {
                     token.tag = .plus;
+                    self.index += 1;
+                    break;
+                },
+                '-' => {
+                    token.tag = .minus;
                     self.index += 1;
                     break;
                 },
@@ -129,6 +143,14 @@ pub fn next(self: *Tokenizer) ?Token {
                 },
                 else => {},
             },
+            .literal_integer => switch (char) {
+                '0'...'9' => {},
+                else => {
+                    token.tag = .literal_integer;
+
+                    break;
+                },
+            },
         }
     }
 
@@ -142,7 +164,7 @@ pub fn next(self: *Tokenizer) ?Token {
     return token;
 }
 
-pub const Token = struct  {
+pub const Token = struct {
     start: u32,
     end: u32,
     tag: Tag,
@@ -151,7 +173,10 @@ pub const Token = struct  {
         end,
         keyword_void,
         keyword_float,
+        keyword_if,
+        keyword_else,
         keyword_return,
+        literal_integer,
         identifier,
         left_brace,
         right_brace,
@@ -159,17 +184,50 @@ pub const Token = struct  {
         right_paren,
         semicolon,
         comma,
+        period,
         plus,
+        minus,
         equals,
+
+        pub fn lexeme(tag: Tag) ?[]const u8 {
+            return switch (tag) {
+                .end,
+                .identifier,
+                .literal_integer,
+                => null,
+                .keyword_void => "void",
+                .keyword_float => "float",
+                .keyword_if => "if",
+                .keyword_else => "else",
+                .keyword_return => "return",
+                .left_brace => "{",
+                .right_brace => "}",
+                .left_paren => "(",
+                .right_paren => ")",
+                .semicolon => ";",
+                .comma => ",",
+                .period => ".",
+                .plus => "+",
+                .minus => "-",
+                .equals => "=",
+            };
+        }
     };
 
-    const keywords = std.ComptimeStringMap(Tag, .{
-        .{ "void", .keyword_void },
-        .{ "float", .keyword_float },
-        .{ "return", .keyword_return },
-    });
+    pub fn lexeme(token: Token) ?[]const u8
+    {
+        return token.tag.lexeme();
+    }
 
     pub fn getKeyword(string: []const u8) ?Tag {
         return keywords.get(string);
     }
+
+    const keywords = std.ComptimeStringMap(Tag, .{
+        .{ "void", .keyword_void },
+        .{ "float", .keyword_float },
+        .{ "if", .keyword_if },
+        .{ "else", .keyword_else },
+        .{ "return", .keyword_return },
+    });
 };

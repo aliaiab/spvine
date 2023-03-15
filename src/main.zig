@@ -7,7 +7,7 @@ pub fn main() !void {
 
     while (tokenizer.next()) |token|
     {
-        std.log.info("{s} - {}:{}", .{ @tagName(token.tag), token.start, token.end });
+        std.log.info("{s} - {}:{}", .{ token.lexeme() orelse @tagName(token.tag), token.start, token.end });
     }
 }
 
