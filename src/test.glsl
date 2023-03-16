@@ -10,6 +10,7 @@
 #endif
 
 #define ENTRYPOINT main()
+
 #define ENTRY ENTRYPOINT
 #define ENTRY_ALIAS ENTRY
 
@@ -28,11 +29,17 @@ void ENTRY_ALIAS {
 
     //clamp res to 1
     if (res > 1) {
-        res = 1;
+        res -= 1;
     }
     else {
-        res = 0;
+        res += 2;
     }
 
     int res_as_int = (int)res;
+
+    res_as_int *= 3;
+
+    res_as_int = res_as_int * 10;
+
+    res_as_int /= 2 + 3;
 }

@@ -63,9 +63,7 @@ pub fn tokenize(self: *Preprocessor) !std.MultiArrayList(Tokenizer.Token) {
 
                 const version = std.meta.stringToEnum(GlslVersion, self.tokenizer.source[version_token.start..version_token.end]);
 
-                std.log.info("FOUND VERSION = {?}", .{ version });        
-
-                self.version = version.?;
+                self.version = version orelse .unknown;
             },
             .directive_if => {
                 const identifier_token = self.tokenizer.next() orelse break;
