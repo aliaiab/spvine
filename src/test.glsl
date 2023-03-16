@@ -1,7 +1,15 @@
+#version 450 
+#define ADD +
+
+#define TEST_FLAG 0
+
+#if TEST_FLAG
+
+#endif
 
 //adds two numbers, a and b
 float add(float a, float b) {
-    return a + b;
+    return a ADD b;
 }
 
 /* 
