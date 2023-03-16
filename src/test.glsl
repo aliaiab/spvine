@@ -9,8 +9,6 @@
 #define PI 3.1415926
 #endif
 
-#error "STINKIE"
-
 //adds two numbers, a and b
 float add(float a, float b) {
     return a ADD b;
