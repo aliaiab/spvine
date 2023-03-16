@@ -1,9 +1,5 @@
-const std = @import("std");
 
 pub const glsl = @import("glsl.zig");
-
-const Parser = glsl.Parser;
-const Ast = glsl.Ast;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}) {};
@@ -34,3 +30,7 @@ fn printAst(ast: Ast, depth: u32) void {
 test {
     std.testing.refAllDecls(@This());
 }
+
+const std = @import("std");
+const Parser = glsl.Parser;
+const Ast = glsl.Ast;

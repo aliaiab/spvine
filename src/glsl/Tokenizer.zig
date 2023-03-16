@@ -1,5 +1,4 @@
-const std = @import("std");
-const Tokenizer = @This();
+//!Implements the lexical analysis stage of the frontend
 
 source: []const u8,
 index: u32,
@@ -590,3 +589,6 @@ test "Basic Vertex shader" {
     try expect(tokenizer.next().?.tag == .right_brace);
     try expect(tokenizer.next() == null);
 }
+
+const std = @import("std");
+const Tokenizer = @This();
