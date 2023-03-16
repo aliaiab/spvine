@@ -3,19 +3,19 @@ const Tokenizer = @This();
 
 source: []const u8,
 index: u32,
+state: enum {
+    start,
+    identifier,
+    slash,
+    single_comment,
+    multi_comment,
+    literal_integer,
+    directive_start,
+    directive_body,
+    directive_identifier,
+} = .start,
 
-pub fn next(self: *Tokenizer) ?Token {
-    var state: enum {
-        start,
-        identifier,
-        slash,
-        single_comment,
-        multi_comment,
-        literal_integer,
-        directive_begin,
-        directive_body,
-    } = .start;
-    
+pub fn next(self: *Tokenizer) ?Token {    
     var token = Token { .start = self.index, .end = self.index, .tag = .end };
 
     var multi_comment_level: usize = 0;
@@ -23,24 +23,23 @@ pub fn next(self: *Tokenizer) ?Token {
     while (self.index < self.source.len) : (self.index += 1) {
         const char = self.source[self.index];
 
-        switch (state) {
+        switch (self.state) {
             .start => switch (char) {
                 0 => break,
                 ' ', '\t', '\r', '\n' => {
                     token.start = self.index + 1;
                 },
                 'a'...'z', 'A'...'Z', '_', => {
-                    state = .identifier;
-                    token.tag = .identifier;
+                    self.state = .identifier;
                 },
                 '#' => {
-                    state = .directive_begin;
+                    self.state = .directive_start;
                 },
                 '0'...'9' => {
-                    state = .literal_integer;
+                    self.state = .literal_integer;
                 },
                 '/' => {
-                    state = .slash;
+                    self.state = .slash;
                 },
                 '{' => {
                     token.tag = .left_brace;
@@ -94,52 +93,74 @@ pub fn next(self: *Tokenizer) ?Token {
                 },
                 else => {},
             },
-            .directive_begin => switch (char) {
-                'a'...'z', 'A'...'Z', '_', => {
-
-                },
-                else => {
-                    state = .directive_body;
-                },
-            },
-            .directive_body => switch (char) {
-                '\n' => {
-                    token.tag = .directive_end;
-                    self.index += 1;
-                    break;
-                },
-                else => {},
-            },
-            .identifier => switch (char) {
-                'a'...'z', 'A'...'Z', '_', '0'...'9' => {},
+            .directive_start => switch (char) {
+                'a'...'z', 'A'...'Z', '_', => {},
                 else => {
                     const string = self.source[token.start..self.index];
 
                     if (Token.getDirective(string)) |directive_tag|
                     {
                         token.tag = directive_tag;
-                    }
+                    }                    
+
+                    self.state = .directive_body;
+
+                    break;
+                },
+            },
+            .directive_body => switch (char) {
+                'a'...'z', 'A'...'Z', '_', => {
+                    self.state = .directive_identifier;
+                },
+                ' ', '\t', => {},
+                '\n', '\r' => {
+                    token.tag = .directive_end;
+                    self.index += 1;
+                    self.state = .start;
+                    break;
+                },
+                else => {},
+            },
+            .directive_identifier => switch (char) {
+                'a'...'z', 'A'...'Z', '_', '0'...'9' => {},
+                else => {
+                    self.state = .directive_body;
+                    token.tag = .directive_identifier;
+
+                    break;
+                },
+            },
+            .identifier => switch (char) {
+                'a'...'z', 'A'...'Z', '_', '0'...'9' => {},
+                else => {
+                    const string = self.source[token.start..self.index];
 
                     if (Token.getKeyword(string)) |keyword_tag|
                     {
                         token.tag = keyword_tag;
                     }
+                    else 
+                    {
+                        token.tag = .identifier;
+                    }
+
+                    self.state = .start;
 
                     break;
                 },
             },
             .slash => switch (char) {
                 '/' => {
-                    state = .single_comment;
+                    self.state = .single_comment;
                 },
                 '*' => {
-                    state = .multi_comment;
+                    self.state = .multi_comment;
                 },
                 else => {},
             },
             .single_comment => switch (char) {
                 '\n' => {
-                    state = .start;
+                    self.state = .start;
                     token.start = self.index + 1;  
                 },
                 else => {},
@@ -152,7 +173,7 @@ pub fn next(self: *Tokenizer) ?Token {
 
                         if (multi_comment_level == 0)
                         {
-                            state = .start;
+                            self.state = .start;
                         }
                         else 
                         {
@@ -173,6 +194,7 @@ pub fn next(self: *Tokenizer) ?Token {
                 '0'...'9' => {},
                 else => {
                     token.tag = .literal_integer;
+                    self.state = .start;
 
                     break;
                 },
@@ -197,6 +219,7 @@ pub const Token = struct {
 
     pub const Tag = enum {
         end,
+        directive_identifier,
         directive_define,
         directive_undef,
         directive_if,
@@ -234,6 +257,7 @@ pub const Token = struct {
                 .end,
                 .identifier,
                 .literal_integer,
+                .directive_identifier,
                 .directive_end,
                 => null,
                 .directive_define => "#define",
@@ -297,7 +321,7 @@ pub const Token = struct {
         .{ "#ifndef", .directive_ifdef },
         .{ "#else", .directive_else },
         .{ "#elif", .directive_elif },
-        .{ "#endif", .directive_elif },
+        .{ "#endif", .directive_endif },
         .{ "#error", .directive_error },
         .{ "#pragma", .directive_pragma },
         .{ "#extension", .directive_pragma },

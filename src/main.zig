@@ -1,13 +1,13 @@
 const std = @import("std");
 
-const Tokenizer = @import("Tokenizer.zig");
+const Preprocessor = @import("Preprocessor.zig");
 
 pub fn main() !void {
-    var tokenizer = Tokenizer { .source = @embedFile("test.glsl"), .index = 0 };
+    var preprocessor = Preprocessor.init(@embedFile("test.glsl"));
 
-    while (tokenizer.next()) |token|
+    while (preprocessor.next()) |token|
     {
-        std.log.info("{s} - {}:{}", .{ token.lexeme() orelse @tagName(token.tag), token.start, token.end });
+        std.log.info("{s} - {}:{} ({s})", .{ token.lexeme() orelse @tagName(token.tag), token.start, token.end, preprocessor.tokenizer.source[token.start..token.end] });
     }
 }
 
