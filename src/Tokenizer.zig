@@ -12,6 +12,8 @@ pub fn next(self: *Tokenizer) ?Token {
         single_comment,
         multi_comment,
         literal_integer,
+        directive_begin,
+        directive_body,
     } = .start;
     
     var token = Token { .start = self.index, .end = self.index, .tag = .end };
@@ -30,6 +32,9 @@ pub fn next(self: *Tokenizer) ?Token {
                 'a'...'z', 'A'...'Z', '_', => {
                     state = .identifier;
                     token.tag = .identifier;
+                },
+                '#' => {
+                    state = .directive_begin;
                 },
                 '0'...'9' => {
                     state = .literal_integer;
@@ -89,10 +94,31 @@ pub fn next(self: *Tokenizer) ?Token {
                 },
                 else => {},
             },
+            .directive_begin => switch (char) {
+                'a'...'z', 'A'...'Z', '_', => {
+
+                },
+                else => {
+                    state = .directive_body;
+                },
+            },
+            .directive_body => switch (char) {
+                '\n' => {
+                    token.tag = .directive_end;
+                    self.index += 1;
+                    break;
+                },
+                else => {},
+            },
             .identifier => switch (char) {
                 'a'...'z', 'A'...'Z', '_', '0'...'9' => {},
                 else => {
                     const string = self.source[token.start..self.index];
+
+                    if (Token.getDirective(string)) |directive_tag|
+                    {
+                        token.tag = directive_tag;
+                    }
 
                     if (Token.getKeyword(string)) |keyword_tag|
                     {
@@ -171,6 +197,20 @@ pub const Token = struct {
 
     pub const Tag = enum {
         end,
+        directive_define,
+        directive_undef,
+        directive_if,
+        directive_ifdef,
+        directive_ifndef,
+        directive_else,
+        directive_elif,
+        directive_endif,
+        directive_error,
+        directive_pragma,
+        directive_extension,
+        directive_version,
+        directive_line,
+        directive_end,
         keyword_void,
         keyword_float,
         keyword_if,
@@ -194,7 +234,21 @@ pub const Token = struct {
                 .end,
                 .identifier,
                 .literal_integer,
+                .directive_end,
                 => null,
+                .directive_define => "#define",
+                .directive_undef => "#undef",
+                .directive_if => "#if",
+                .directive_ifdef => "#ifdef",
+                .directive_ifndef => "#ifndef",
+                .directive_else => "#else",
+                .directive_elif => "#elif",
+                .directive_endif => "#endif",
+                .directive_error => "#error",
+                .directive_pragma => "#pragma",
+                .directive_extension => "#extension",
+                .directive_version => "#version",
+                .directive_line => "#line",
                 .keyword_void => "void",
                 .keyword_float => "float",
                 .keyword_if => "if",
@@ -223,11 +277,31 @@ pub const Token = struct {
         return keywords.get(string);
     }
 
+    pub fn getDirective(string: []const u8) ?Tag {
+        return directives.get(string);
+    }
+
     const keywords = std.ComptimeStringMap(Tag, .{
         .{ "void", .keyword_void },
         .{ "float", .keyword_float },
         .{ "if", .keyword_if },
         .{ "else", .keyword_else },
         .{ "return", .keyword_return },
+    });
+
+    const directives = std.ComptimeStringMap(Tag, .{
+        .{ "#define", .directive_define },
+        .{ "#undef", .directive_undef },
+        .{ "#if", .directive_if },
+        .{ "#ifdef", .directive_ifdef },
+        .{ "#ifndef", .directive_ifdef },
+        .{ "#else", .directive_else },
+        .{ "#elif", .directive_elif },
+        .{ "#endif", .directive_elif },
+        .{ "#error", .directive_error },
+        .{ "#pragma", .directive_pragma },
+        .{ "#extension", .directive_pragma },
+        .{ "#version", .directive_version },
+        .{ "#line", .directive_line },
     });
 };
