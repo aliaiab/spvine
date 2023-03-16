@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const Parser = @import("Parser.zig");
+const Ast = @import("Ast.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}) {};
@@ -12,6 +13,20 @@ pub fn main() !void {
     defer parser.deinit();
 
     try parser.parse();
+
+    printAst(parser.ast, 0);
+}
+
+fn printAst(ast: Ast, depth: u32) void {
+    for (ast.nodes.items(.tag)) |tag| {
+        // if (tag == .nil) continue;
+
+        for (0..depth) |_| {
+            std.log.info("  ", .{});
+        }
+
+        std.log.info("node: {}", .{ tag });
+    } 
 }
 
 test {

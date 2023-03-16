@@ -13,8 +13,6 @@
 #define ENTRY ENTRYPOINT
 #define ENTRY_ALIAS ENTRY
 
-#define MAX(a, b) a > b ? a : b
-
 //adds two numbers, a and b
 float add(float a, float b) {
     return a ADD b;
