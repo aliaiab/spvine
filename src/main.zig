@@ -1,7 +1,9 @@
 const std = @import("std");
 
-const Parser = @import("Parser.zig");
-const Ast = @import("Ast.zig");
+pub const glsl = @import("glsl.zig");
+
+const Parser = glsl.Parser;
+const Ast = glsl.Ast;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}) {};
