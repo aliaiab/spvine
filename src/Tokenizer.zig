@@ -13,6 +13,8 @@ state: enum {
     directive_start,
     directive_body,
     directive_identifier,
+    directive_literal_integer,
+    directive_literal_real,
 } = .start,
 
 pub fn next(self: *Tokenizer) ?Token {    
@@ -25,7 +27,7 @@ pub fn next(self: *Tokenizer) ?Token {
 
         switch (self.state) {
             .start => switch (char) {
-                0 => break,
+                0 => return null,
                 ' ', '\t', '\r', '\n' => {
                     token.start = self.index + 1;
                 },
@@ -112,11 +114,17 @@ pub fn next(self: *Tokenizer) ?Token {
                 'a'...'z', 'A'...'Z', '_', => {
                     self.state = .directive_identifier;
                 },
-                ' ', '\t', => {},
+                '0'...'9' => {
+                    self.state = .directive_literal_integer;
+                },
+                ' ', '\t', => {
+                    token.start = self.index + 1;
+                },
                 '\n', '\r' => {
                     token.tag = .directive_end;
                     self.index += 1;
                     self.state = .start;
+
                     break;
                 },
                 else => {},
@@ -126,6 +134,23 @@ pub fn next(self: *Tokenizer) ?Token {
                 else => {
                     self.state = .directive_body;
                     token.tag = .directive_identifier;
+
+                    break;
+                },
+            },
+            .directive_literal_integer => switch (char) {
+                '0'...'9' => {},
+                else => {
+                    self.state = .directive_body;
+                    token.tag = .directive_literal_integer;
+
+                    break;
+                },
+            },
+            .directive_literal_real => switch (char) {
+                else => {
+                    self.state = .directive_body;
+                    token.tag = .directive_literal_real;
 
                     break;
                 },
@@ -220,6 +245,8 @@ pub const Token = struct {
     pub const Tag = enum {
         end,
         directive_identifier,
+        directive_literal_integer,
+        directive_literal_real,
         directive_define,
         directive_undef,
         directive_if,
@@ -235,6 +262,7 @@ pub const Token = struct {
         directive_line,
         directive_end,
         keyword_void,
+        keyword_int,
         keyword_float,
         keyword_if,
         keyword_else,
@@ -258,6 +286,8 @@ pub const Token = struct {
                 .identifier,
                 .literal_integer,
                 .directive_identifier,
+                .directive_literal_integer,
+                .directive_literal_real,
                 .directive_end,
                 => null,
                 .directive_define => "#define",
@@ -274,6 +304,7 @@ pub const Token = struct {
                 .directive_version => "#version",
                 .directive_line => "#line",
                 .keyword_void => "void",
+                .keyword_int => "int",
                 .keyword_float => "float",
                 .keyword_if => "if",
                 .keyword_else => "else",
@@ -307,6 +338,7 @@ pub const Token = struct {
 
     const keywords = std.ComptimeStringMap(Tag, .{
         .{ "void", .keyword_void },
+        .{ "int", .keyword_int },
         .{ "float", .keyword_float },
         .{ "if", .keyword_if },
         .{ "else", .keyword_else },

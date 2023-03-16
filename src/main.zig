@@ -1,14 +1,17 @@
 const std = @import("std");
 
-const Preprocessor = @import("Preprocessor.zig");
+const Parser = @import("Parser.zig");
 
 pub fn main() !void {
-    var preprocessor = Preprocessor.init(@embedFile("test.glsl"));
+    var gpa = std.heap.GeneralPurposeAllocator(.{}) {};
+    defer std.debug.assert(!gpa.deinit());
 
-    while (preprocessor.next()) |token|
-    {
-        std.log.info("{s} - {}:{} ({s})", .{ token.lexeme() orelse @tagName(token.tag), token.start, token.end, preprocessor.tokenizer.source[token.start..token.end] });
-    }
+    const allocator = gpa.allocator();
+
+    var parser = Parser.init(allocator, @embedFile("test.glsl"));
+    defer parser.deinit();
+
+    try parser.parse();
 }
 
 test {
