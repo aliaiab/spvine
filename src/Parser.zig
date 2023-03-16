@@ -40,7 +40,7 @@ pub fn parse(self: *Parser) !void {
 
     while (defines.next()) |define|
     {
-        std.log.info("define: {s} = '{}'", .{ define.key_ptr.*, define.value_ptr.start_token.tag });
+        std.log.info("define: {s} = .{s}", .{ define.key_ptr.*, @tagName(self.token_tags[define.value_ptr.start_token]) });
     }
 
     var state: enum {

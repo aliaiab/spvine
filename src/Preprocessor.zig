@@ -15,7 +15,7 @@ defines: std.StringArrayHashMapUnmanaged(Define),
 
 pub const Define = struct 
 {
-    start_token: Tokenizer.Token,
+    start_token: u32,
 };
 
 pub fn init(allocator: std.mem.Allocator, source: []const u8) Preprocessor 
@@ -65,30 +65,53 @@ pub fn tokenize(self: *Preprocessor) !std.MultiArrayList(Tokenizer.Token) {
 
                 const define = self.defines.getOrPut(self.allocator, string) catch unreachable;
 
-                define.value_ptr.start_token = self.tokenizer.next() orelse break;
+                try tokens.append(self.allocator, token);
+                try tokens.append(self.allocator, identifier_token);
+
+                const start_token = @intCast(u32, tokens.len);
+
+                define.value_ptr.start_token = start_token;
+
+                try tokens.append(self.allocator, self.tokenizer.next() orelse break);
+            },
+            .directive_end => {
+                try tokens.append(self.allocator, token);
             },
             .identifier => {
-                //TODO: expand macros
+                if (try self.tryExpandMacro(&tokens, token)) {
 
-                // try expandMacro(token);
+                } else {
+                    try tokens.append(self.allocator, token);
+                }
             },
-            else => {},
+            else => {
+                try tokens.append(self.allocator, token);
+            },
         }
-
-        try tokens.append(self.allocator, token);
     }
 
     return tokens;
 }
 
-fn expandMacro(self: *Preprocessor, tokens: std.MultiArrayList(Tokenizer.Token), identifier_token: Tokenizer.Token) !void 
-{
+fn tryExpandMacro(self: *Preprocessor, tokens: *std.MultiArrayList(Tokenizer.Token), identifier_token: Tokenizer.Token) !bool {
     const string = self.tokenizer.source[identifier_token.start..identifier_token.end];
 
-    const define: Define = self.defines.get(self.allocator, string) catch unreachable;
+    const define: Define = self.defines.get(string) orelse return false;
 
-    const start_token = define.start_token;
+    var token_index: u32 = define.start_token;
 
-    _ = start_token;
-    _ = tokens;
+    while (token_index < tokens.len) {
+        const token = tokens.get(token_index);
+
+        if (token.tag == .directive_end)
+        {
+            break;
+        }
+
+        try tokens.append(self.allocator, token);
+
+        token_index += 1;
+    }
+
+    return true;
 }
