@@ -1,6 +1,7 @@
 const std = @import("std");
 const Preprocessor = @import("Preprocessor.zig");
 const Parser = @This();
+const Ast = @import("Ast.zig");
 
 const Token = @import("Tokenizer.zig").Token;
 
@@ -11,6 +12,7 @@ token_tags: []Token.Tag,
 token_starts: []u32,
 token_ends: []u32,
 token_index: u32,
+ast: Ast = .{},
 
 pub fn init(allocator: std.mem.Allocator, source: []const u8) Parser {
     return .{
@@ -28,9 +30,13 @@ pub fn deinit(self: *Parser) void  {
     defer self.* = undefined;
     defer self.preprocessor.deinit();
     defer self.tokens.deinit(self.preprocessor.allocator);
+    defer self.ast.deinit(self.allocator);
 }
 
+///Root parse node 
 pub fn parse(self: *Parser) !void {
+    const log = std.log.scoped(.parse);
+
     self.tokens = try self.preprocessor.tokenize();
     self.token_tags = self.tokens.items(.tag);
     self.token_starts = self.tokens.items(.start);
@@ -40,13 +46,16 @@ pub fn parse(self: *Parser) !void {
 
     while (defines.next()) |define|
     {
-        std.log.info("define: {s} = .{s}", .{ define.key_ptr.*, @tagName(self.token_tags[define.value_ptr.start_token]) });
+        log.info("define: {s} = .{s}", .{ define.key_ptr.*, @tagName(self.token_tags[define.value_ptr.start_token]) });
     }
 
     var state: enum {
         start,
         directive,
     } = .start;
+
+    log.info("begin:", .{});
+    defer log.info("end", .{});
 
     while (self.token_index < self.tokens.len) {
         switch (state) {
@@ -74,7 +83,7 @@ pub fn parse(self: *Parser) !void {
                 => {
                     std.log.info("Found type expr", .{});
 
-                    self.parseProcedure() catch {
+                    _ = self.parseProcedure() catch {
                         _ = self.nextToken();
                     };
                 },
@@ -95,8 +104,14 @@ pub fn parse(self: *Parser) !void {
     }
 }
 
-pub fn parseProcedure(self: *Parser) !void {
+pub fn parseProcedure(self: *Parser) !Ast.NodeIndex {
     const log = std.log.scoped(.parseProcedure);
+
+    log.info("begin:", .{});
+    defer log.info("end", .{});
+
+    const node_index = try self.reserveNode(.proc_decl);
+    errdefer self.unreserveNode(node_index);
 
     try self.parseType();
 
@@ -106,15 +121,79 @@ pub fn parseProcedure(self: *Parser) !void {
 
     _ = try self.expectToken(.left_paren);
 
-    //parse arg list
+    self.parseParamList() catch {};
 
     _ = try self.expectToken(.right_paren);
 
     _ = try self.expectToken(.left_brace);
 
-    //parse body
+    try self.parseStatement();
 
     _ = try self.expectToken(.right_brace);
+
+    return node_index;
+}
+
+pub fn parseParamList(self: *Parser) !void {
+    const log = std.log.scoped(.parseParamList);
+
+    log.info("begin:", .{});
+    defer log.info("end", .{});
+
+    while (true) {
+        _ = try self.parseType();
+
+        const param_identifier = try self.expectToken(.identifier);
+
+        std.log.info("param_list: param_identifier = {s}", .{ self.preprocessor.tokenizer.source[self.token_starts[param_identifier]..self.token_ends[param_identifier]] });
+
+        if (self.eatToken(.comma) == null)
+        {
+            break;
+        }
+    }
+}
+
+pub fn parseStatement(self: *Parser) !void 
+{
+    const log = std.log.scoped(.parseStatement);
+
+    log.info("begin:", .{});
+    defer log.info("end", .{});
+
+    switch (self.token_tags[self.token_index]) {
+        .keyword_if => {},
+        .keyword_else => {},
+        .semicolon => {},
+        .keyword_float,
+        .keyword_int,
+        .keyword_void,
+        => {
+            //int a = 0;
+            _ = self.nextToken();
+        },
+        else => {},
+    }
+}
+
+pub fn parseExpression(self: *Parser) !Ast.NodeIndex
+{
+    const log = std.log.scoped(.parseExpression);
+
+    log.info("begin:", .{});
+    defer log.info("end", .{});
+
+    switch (self.token_tags[self.token_index]) {
+        .literal_integer => {},
+        .left_paren => {
+            self.token_index += 1;
+
+            try self.parseExpression();
+
+            _ = try self.expectToken(.right_paren);
+        },
+        else => {},
+    }
 }
 
 pub fn parseType(self: *Parser) !void {
@@ -124,9 +203,31 @@ pub fn parseType(self: *Parser) !void {
         self.eatToken(.keyword_float) orelse return error.ExpectedToken;
 }
 
+pub fn reserveNode(self: *Parser, tag: Ast.NodeTag) !Ast.NodeIndex {
+    return try self.ast.addNode(self.allocator, tag);
+}
+
+pub fn unreserveNode(self: *Parser, node: Ast.NodeIndex) void 
+{
+    if (node == self.ast.nodes.len) {
+        self.ast.nodes.resize(self.allocator, self.ast.nodes.len - 1) catch unreachable;
+    }
+    else {
+        self.ast.nodes.items(.tag)[node] = .nil;
+    }
+}
+
 pub fn expectToken(self: *Parser, tag: Token.Tag) !u32 {
     return self.eatToken(tag) orelse error.ExpectedToken;
 }
+
+pub fn tokenIndexString(self: Parser, token_index: u32) []const u8 {
+    return self.tokenString(self.tokens.get(token_index));
+}
+
+pub fn tokenString(self: Parser, token: Token) []const u8 {
+    return self.preprocessor.tokenizer.source[token.start..token.end];
+} 
 
 pub fn eatToken(self: *Parser, tag: Token.Tag) ?u32 {
     if (self.token_index < self.tokens.len and self.tokens.items(.tag)[self.token_index] == tag)

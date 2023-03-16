@@ -2,9 +2,21 @@ const std = @import("std");
 const Preprocessor = @This();
 const Tokenizer = @import("Tokenizer.zig");
 
-pub const GlslVersion = enum
-{
+pub const GlslVersion = enum {
     unknown,
+
+    @"110",
+    @"120",
+    @"130",
+    @"140",
+    @"150",
+
+    @"330",
+
+    @"410",
+    @"420",
+    @"430",
+    @"440",
     @"450",
 };
 
@@ -42,9 +54,18 @@ pub fn tokenize(self: *Preprocessor) !std.MultiArrayList(Tokenizer.Token) {
         switch (token.tag) 
         {
             .directive_version => {
+                if (self.version != .unknown)
+                {
+                    @panic("File can only specify one version");
+                }
+
                 const version_token = self.tokenizer.next() orelse break;
 
-                std.log.info("FOUND VERSION = {s}", .{ self.tokenizer.source[version_token.start..version_token.end] });        
+                const version = std.meta.stringToEnum(GlslVersion, self.tokenizer.source[version_token.start..version_token.end]);
+
+                std.log.info("FOUND VERSION = {?}", .{ version });        
+
+                self.version = version.?;
             },
             .directive_if => {
                 const identifier_token = self.tokenizer.next() orelse break;
