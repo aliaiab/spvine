@@ -9,6 +9,12 @@
 #define PI 3.1415926
 #endif
 
+#define ENTRYPOINT main()
+#define ENTRY ENTRYPOINT
+#define ENTRY_ALIAS ENTRY
+
+#define MAX(a, b) a > b ? a : b
+
 //adds two numbers, a and b
 float add(float a, float b) {
     return a ADD b;
@@ -19,7 +25,7 @@ float add(float a, float b) {
 
     good luck!
 */
-void main() {
+void ENTRY_ALIAS {
     float res = add(1, 2 + 1);
 
     //clamp res to 1

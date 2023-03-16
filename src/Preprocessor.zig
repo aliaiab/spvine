@@ -103,14 +103,21 @@ fn tryExpandMacro(self: *Preprocessor, tokens: *std.MultiArrayList(Tokenizer.Tok
     while (token_index < tokens.len) {
         const token = tokens.get(token_index);
 
-        if (token.tag == .directive_end)
+        switch (token.tag)
         {
-            break;
+            .identifier => {
+                if (!try self.tryExpandMacro(tokens, token))
+                {
+                    try tokens.append(self.allocator, token);
+                }
+                token_index += 1;
+            },
+            .directive_end => break,
+            else => {
+                try tokens.append(self.allocator, token);
+                token_index += 1;
+            },
         }
-
-        try tokens.append(self.allocator, token);
-
-        token_index += 1;
     }
 
     return true;
