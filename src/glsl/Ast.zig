@@ -1,5 +1,4 @@
-const std = @import("std");
-const Ast = @This();
+//! The abstract syntax tree (AST) for glsl
 
 nodes: std.MultiArrayList(struct { tag: NodeTag, data: NodeData }) = .{},
 
@@ -52,3 +51,6 @@ pub const NodeTag = enum(u8) {
     proc_prototype,
     compound_statement,
 };
+
+const std = @import("std");
+const Ast = @This();

@@ -1,9 +1,4 @@
-const std = @import("std");
-const Preprocessor = @import("Preprocessor.zig");
-const Parser = @This();
-const Ast = @import("Ast.zig");
-
-const Token = @import("Tokenizer.zig").Token;
+//!Implements the syntactic analysis stage of the frontend
 
 allocator: std.mem.Allocator,
 preprocessor: Preprocessor,
@@ -259,3 +254,9 @@ pub fn nextToken(self: *Parser) ?u32 {
 
     return result;
 }
+
+const std = @import("std");
+const Preprocessor = @import("Preprocessor.zig");
+const Parser = @This();
+const Ast = @import("Ast.zig");
+const Token = @import("Tokenizer.zig").Token;

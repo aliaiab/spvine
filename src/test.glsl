@@ -35,7 +35,7 @@ void ENTRY_ALIAS {
         res += 2;
     }
 
-    int res_as_int = (int)res;
+    int res_as_int = int(res);
 
     res_as_int *= 3;
 
