@@ -11,11 +11,8 @@ state: enum {
     multi_comment,
     literal_integer,
     directive_start,
-    directive_body,
-    directive_identifier,
-    directive_literal_integer,
-    directive_literal_real,
 } = .start,
+is_directive: bool = false,
 
 pub fn next(self: *Tokenizer) ?Token {    
     var token = Token { .start = self.index, .end = self.index, .tag = .end };
@@ -28,8 +25,21 @@ pub fn next(self: *Tokenizer) ?Token {
         switch (self.state) {
             .start => switch (char) {
                 0 => return null,
-                ' ', '\t', '\r', '\n' => {
+                ' ', '\t', => {
                     token.start = self.index + 1;
+                },
+                '\r', '\n' => {
+                    if (!self.is_directive)
+                    {
+                        token.start = self.index + 1;
+                    }
+                    else 
+                    {
+                        token.tag = .directive_end;
+                        self.is_directive = false;
+                        self.index += 1;
+                        break;
+                    }
                 },
                 'a'...'z', 'A'...'Z', '_', => {
                     self.state = .identifier;
@@ -105,52 +115,8 @@ pub fn next(self: *Tokenizer) ?Token {
                         token.tag = directive_tag;
                     }                    
 
-                    self.state = .directive_body;
-
-                    break;
-                },
-            },
-            .directive_body => switch (char) {
-                'a'...'z', 'A'...'Z', '_', => {
-                    self.state = .directive_identifier;
-                },
-                '0'...'9' => {
-                    self.state = .directive_literal_integer;
-                },
-                ' ', '\t', => {
-                    token.start = self.index + 1;
-                },
-                '\n', '\r' => {
-                    token.tag = .directive_end;
-                    self.index += 1;
                     self.state = .start;
-
-                    break;
-                },
-                else => {},
-            },
-            .directive_identifier => switch (char) {
-                'a'...'z', 'A'...'Z', '_', '0'...'9' => {},
-                else => {
-                    self.state = .directive_body;
-                    token.tag = .directive_identifier;
-
-                    break;
-                },
-            },
-            .directive_literal_integer => switch (char) {
-                '0'...'9' => {},
-                else => {
-                    self.state = .directive_body;
-                    token.tag = .directive_literal_integer;
-
-                    break;
-                },
-            },
-            .directive_literal_real => switch (char) {
-                else => {
-                    self.state = .directive_body;
-                    token.tag = .directive_literal_real;
+                    self.is_directive = true;
 
                     break;
                 },
@@ -233,6 +199,10 @@ pub fn next(self: *Tokenizer) ?Token {
     }
 
     token.end = self.index;
+
+    const log = std.log.scoped(.tokenizer);
+
+    log.info("token: {s}", .{ @tagName(token.tag) });
 
     return token;
 }

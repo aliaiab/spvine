@@ -11,6 +11,12 @@ pub const GlslVersion = enum
 allocator: std.mem.Allocator,
 tokenizer: Tokenizer,
 version: GlslVersion,
+defines: std.StringArrayHashMapUnmanaged(Define),
+
+pub const Define = struct 
+{
+    start_token: Tokenizer.Token,
+};
 
 pub fn init(allocator: std.mem.Allocator, source: []const u8) Preprocessor 
 {
@@ -18,45 +24,71 @@ pub fn init(allocator: std.mem.Allocator, source: []const u8) Preprocessor
         .allocator = allocator,
         .tokenizer = .{ .source = source, .index = 0 },
         .version = .unknown,
+        .defines = .{},
     };
 }
 
 pub fn deinit(self: *Preprocessor) void 
 {
-    self.* = undefined;
+    defer self.* = undefined;
+    defer self.defines.deinit(self.allocator);
 }
 
-pub fn next(self: *Preprocessor) ?Tokenizer.Token
-{
-    var next_token = self.tokenizer.next() orelse return null;
-
-    switch (next_token.tag) 
-    {
-        .directive_version => {
-            const version_token = self.tokenizer.next() orelse return null;
-
-            std.log.info("FOUND VERSION = {s}", .{ self.tokenizer.source[version_token.start..version_token.end] });        
-
-            return version_token;
-        },
-        .directive_if => {},
-        .directive_endif => {},
-        .identifier => {
-            //TODO: expand macros
-        },
-        else => {},
-    }
-
-    return next_token;
-}
-
-pub fn readAllToEndAlloc(self: *Preprocessor) !std.MultiArrayList(Tokenizer.Token) {
+pub fn tokenize(self: *Preprocessor) !std.MultiArrayList(Tokenizer.Token) {
     var tokens = std.MultiArrayList(Tokenizer.Token) {};
 
-    while (self.next()) |token|
+    while (self.tokenizer.next()) |token|
     {
+        switch (token.tag) 
+        {
+            .directive_version => {
+                const version_token = self.tokenizer.next() orelse break;
+
+                std.log.info("FOUND VERSION = {s}", .{ self.tokenizer.source[version_token.start..version_token.end] });        
+            },
+            .directive_if => {
+                const identifier_token = self.tokenizer.next() orelse break;
+
+                const string = self.tokenizer.source[identifier_token.start..identifier_token.end];
+
+                const define = self.defines.get(string) orelse return error.UndefinedMacro;
+
+                const value_token = define.start_token;
+
+                _ = value_token;
+            },
+            .directive_endif => {},
+            .directive_define => {
+                const identifier_token = self.tokenizer.next() orelse break;
+
+                const string = self.tokenizer.source[identifier_token.start..identifier_token.end];
+
+                const define = self.defines.getOrPut(self.allocator, string) catch unreachable;
+
+                define.value_ptr.start_token = self.tokenizer.next() orelse break;
+            },
+            .identifier => {
+                //TODO: expand macros
+
+                // try expandMacro(token);
+            },
+            else => {},
+        }
+
         try tokens.append(self.allocator, token);
     }
 
     return tokens;
+}
+
+fn expandMacro(self: *Preprocessor, tokens: std.MultiArrayList(Tokenizer.Token), identifier_token: Tokenizer.Token) !void 
+{
+    const string = self.tokenizer.source[identifier_token.start..identifier_token.end];
+
+    const define: Define = self.defines.get(self.allocator, string) catch unreachable;
+
+    const start_token = define.start_token;
+
+    _ = start_token;
+    _ = tokens;
 }
