@@ -1,27 +1,7 @@
-const std = @import("std");
-const Preprocessor = @This();
-const Tokenizer = @import("Tokenizer.zig");
-
-pub const GlslVersion = enum {
-    unknown,
-
-    @"110",
-    @"120",
-    @"130",
-    @"140",
-    @"150",
-
-    @"330",
-
-    @"410",
-    @"420",
-    @"430",
-    @"440",
-    @"450",
-};
 
 allocator: std.mem.Allocator,
 tokenizer: Tokenizer,
+//TODO: move glsl version parsing/storage to Air
 version: GlslVersion,
 defines: std.StringArrayHashMapUnmanaged(Define),
 
@@ -56,6 +36,7 @@ pub fn tokenize(self: *Preprocessor) !std.MultiArrayList(Tokenizer.Token) {
             .directive_version => {
                 if (self.version != .unknown)
                 {
+                    //TODO: move to Sema to produce proper errors
                     @panic("File can only specify one version");
                 }
 
@@ -141,3 +122,8 @@ fn tryExpandMacro(self: *Preprocessor, tokens: *std.MultiArrayList(Tokenizer.Tok
 
     return true;
 }
+
+const std = @import("std");
+const Preprocessor = @This();
+const Tokenizer = @import("Tokenizer.zig");
+const GlslVersion = @import("Air.zig").GlslVersion;

@@ -1,4 +1,4 @@
-//!Implements the lexical analysis stage of the frontend
+//! Implements the lexical analysis stage of the frontend
 
 source: []const u8,
 index: u32,
