@@ -1,4 +1,4 @@
-//!Implements the syntactic analysis stage of the frontend
+//! Implements the syntactic analysis stage of the frontend
 
 allocator: std.mem.Allocator,
 preprocessor: Preprocessor,
