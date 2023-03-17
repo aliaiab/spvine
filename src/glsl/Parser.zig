@@ -7,7 +7,21 @@ token_tags: []Token.Tag,
 token_starts: []u32,
 token_ends: []u32,
 token_index: u32,
+errors: std.ArrayListUnmanaged(Error),
 ast: Ast = .{},
+
+pub const Error = struct {
+    tag: Tag,
+    token: Ast.TokenIndex,
+    data: union {
+        none: void,
+        expected_token: Token.Tag,
+    } = .{ .none = {} },
+
+    pub const Tag = enum(u8) {
+        expected_token,
+    };
+};
 
 pub fn init(allocator: std.mem.Allocator, source: []const u8) Parser {
     return .{
@@ -18,6 +32,7 @@ pub fn init(allocator: std.mem.Allocator, source: []const u8) Parser {
         .token_starts = &.{},
         .token_ends = &.{},
         .token_index = 0,
+        .errors = .{},
     };
 }
 
@@ -26,6 +41,7 @@ pub fn deinit(self: *Parser) void  {
     defer self.preprocessor.deinit();
     defer self.tokens.deinit(self.preprocessor.allocator);
     defer self.ast.deinit(self.allocator);
+    defer self.errors.deinit(self.allocator);
 }
 
 ///Root parse node 
@@ -213,6 +229,14 @@ pub fn unreserveNode(self: *Parser, node: Ast.NodeIndex) void
 }
 
 pub fn expectToken(self: *Parser, tag: Token.Tag) !u32 {
+    errdefer self.errors.append(self.allocator, .{
+        .tag = .expected_token,
+        .token = self.token_index,
+        .data = .{
+            .expected_token = tag,
+        },
+    }) catch unreachable;
+
     return self.eatToken(tag) orelse error.ExpectedToken;
 }
 
