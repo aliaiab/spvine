@@ -13,6 +13,16 @@ pub fn main() !void {
     try parser.parse();
 
     printAst(parser.ast, 0);
+
+    std.debug.print("\n", .{});
+
+    for (parser.errors.items) |error_value| {
+        switch (error_value.tag) {
+            .expected_token => {
+                std.log.err("expected '{s}'", .{ error_value.data.expected_token.lexeme() orelse @tagName(error_value.data.expected_token) });
+            },
+        }        
+    }
 }
 
 fn printAst(ast: Ast, depth: u32) void {

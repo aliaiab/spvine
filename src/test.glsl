@@ -21,8 +21,6 @@ float add(float a, float b) {
 
 /* 
     entrypoint procedure
-
-    good luck!
 */
 void ENTRY_ALIAS {
     float res = add(1, 2 + 1);
@@ -42,25 +40,4 @@ void ENTRY_ALIAS {
     res_as_int = res_as_int * 10;
 
     res_as_int /= 2 + 3;
-
-    /*
-    type material: struct 
-        %0 = field("a");
-        %1 = field("b");
-
-    proc add:
-        %0 = arg(0);
-        %1 = arg(1);
-
-        %2 = add(%0, %1);
-        %3 = ret(%2);
-
-    proc main:
-        %0 = proc_call(add, 1, 3); //%0 = add(1, 3);
-        %1 = constant(1); //%1 = 1;
-        %2 = cmp_gt(%0, %1); //%0 > %1
-        %3 = if(%2);
-        %4 = else;
-        %5 = ret;
-    */
 }
