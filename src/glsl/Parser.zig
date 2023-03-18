@@ -1,64 +1,40 @@
 //! Implements the syntactic analysis stage of the frontend
 
 allocator: std.mem.Allocator,
-preprocessor: Preprocessor,
-tokens: std.MultiArrayList(Token),
-token_tags: []Token.Tag,
-token_starts: []u32,
-token_ends: []u32,
+source: []const u8,
+token_tags: []const Token.Tag,
+token_starts: []const u32,
+token_ends: []const u32,
 token_index: u32,
-errors: std.ArrayListUnmanaged(Error),
-ast: Ast = .{},
+nodes: Ast.NodeList,
+errors: std.ArrayListUnmanaged(Ast.Error),
 
-pub const Error = struct {
-    tag: Tag,
-    token: Ast.TokenIndex,
-    data: union {
-        none: void,
-        expected_token: Token.Tag,
-    } = .{ .none = {} },
-
-    pub const Tag = enum(u8) {
-        expected_token,
-    };
-};
-
-pub fn init(allocator: std.mem.Allocator, source: []const u8) Parser {
+pub fn init(
+    allocator: std.mem.Allocator, 
+    source: []const u8,
+    tokens: Ast.TokenList.Slice,
+) Parser {
     return .{
         .allocator = allocator,
-        .preprocessor = Preprocessor.init(allocator, source),
-        .tokens = .{},
-        .token_tags = &.{},
-        .token_starts = &.{},
-        .token_ends = &.{},
+        .source = source,
+        .token_tags = tokens.items(.tag),
+        .token_starts = tokens.items(.start),
+        .token_ends = tokens.items(.end),
         .token_index = 0,
+        .nodes = .{},
         .errors = .{},
     };
 }
 
-pub fn deinit(self: *Parser) void  {
+pub fn deinit(self: *Parser) void {
     defer self.* = undefined;
-    defer self.preprocessor.deinit();
-    defer self.tokens.deinit(self.preprocessor.allocator);
-    defer self.ast.deinit(self.allocator);
+    defer self.nodes.deinit(self.allocator);
     defer self.errors.deinit(self.allocator);
 }
 
 ///Root parse node 
 pub fn parse(self: *Parser) !void {
     const log = std.log.scoped(.parse);
-
-    self.tokens = try self.preprocessor.tokenize();
-    self.token_tags = self.tokens.items(.tag);
-    self.token_starts = self.tokens.items(.start);
-    self.token_ends = self.tokens.items(.end);
-
-    var defines = self.preprocessor.defines.iterator();
-
-    while (defines.next()) |define|
-    {
-        log.info("define: {s} = .{s}", .{ define.key_ptr.*, @tagName(self.token_tags[define.value_ptr.start_token]) });
-    }
 
     var state: enum {
         start,
@@ -68,7 +44,7 @@ pub fn parse(self: *Parser) !void {
     log.info("begin:", .{});
     defer log.info("end", .{});
 
-    while (self.token_index < self.tokens.len) {
+    while (self.token_index < self.token_tags.len) {
         switch (state) {
             .start => switch (self.token_tags[self.token_index]) {
                 .directive_define,
@@ -128,7 +104,7 @@ pub fn parseProcedure(self: *Parser) !Ast.NodeIndex {
 
     const identifier = try self.expectToken(.identifier);
 
-    log.info("identifier = {s}", .{ self.preprocessor.tokenizer.source[self.tokens.items(.start)[identifier]..self.tokens.items(.end)[identifier]] });
+    log.info("identifier = {s}", .{ self.source[self.token_starts[identifier]..self.token_ends[identifier]] });
 
     _ = try self.expectToken(.left_paren);
 
@@ -156,7 +132,7 @@ pub fn parseParamList(self: *Parser) !void {
 
         const param_identifier = try self.expectToken(.identifier);
 
-        std.log.info("param_list: param_identifier = {s}", .{ self.preprocessor.tokenizer.source[self.token_starts[param_identifier]..self.token_ends[param_identifier]] });
+        std.log.info("param_list: param_identifier = {s}", .{ self.source[self.token_starts[param_identifier]..self.token_ends[param_identifier]] });
 
         if (self.eatToken(.comma) == null)
         {
@@ -214,17 +190,25 @@ pub fn parseType(self: *Parser) !void {
         self.eatToken(.keyword_float) orelse return error.ExpectedToken;
 }
 
+pub fn addNode(self: *Parser, allocator: std.mem.Allocator, tag: Ast.NodeTag) !Ast.NodeIndex {
+    const index = try self.nodes.addOne(allocator);
+
+    self.nodes.items(.tag)[index] = tag;
+
+    return @intCast(Ast.NodeIndex, index);
+}
+
 pub fn reserveNode(self: *Parser, tag: Ast.NodeTag) !Ast.NodeIndex {
-    return try self.ast.addNode(self.allocator, tag);
+    return try self.addNode(self.allocator, tag);
 }
 
 pub fn unreserveNode(self: *Parser, node: Ast.NodeIndex) void 
 {
-    if (node == self.ast.nodes.len) {
-        self.ast.nodes.resize(self.allocator, self.ast.nodes.len - 1) catch unreachable;
+    if (node == self.nodes.len) {
+        self.nodes.resize(self.allocator, self.nodes.len - 1) catch unreachable;
     }
     else {
-        self.ast.nodes.items(.tag)[node] = .nil;
+        self.nodes.items(.tag)[node] = .nil;
     }
 }
 
@@ -249,7 +233,7 @@ pub fn tokenString(self: Parser, token: Token) []const u8 {
 } 
 
 pub fn eatToken(self: *Parser, tag: Token.Tag) ?u32 {
-    if (self.token_index < self.tokens.len and self.tokens.items(.tag)[self.token_index] == tag)
+    if (self.token_index < self.token_tags.len and self.token_tags[self.token_index] == tag)
     {
         return self.nextToken();
     }
@@ -263,18 +247,10 @@ pub fn nextToken(self: *Parser) ?u32 {
     const result = self.token_index;
     self.token_index += 1;
 
-    if (result >= self.tokens.len)
+    if (result >= self.token_tags.len)
     {
         return null;
     }
-
-    const token = self.tokens.get(result);
-
-    std.log.info("{s} - {}:{} ({s})", .{ 
-        token.lexeme() orelse @tagName(token.tag), 
-        token.start, token.end, 
-        self.preprocessor.tokenizer.source[token.start..token.end] 
-    });
 
     return result;
 }
