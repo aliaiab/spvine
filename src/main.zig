@@ -7,19 +7,23 @@ pub fn main() !void {
 
     const allocator = gpa.allocator();
 
-    var parser = Parser.init(allocator, @embedFile("test.glsl"));
-    defer parser.deinit();
+    var ast = try Ast.parse(allocator, @embedFile("test.glsl"));
+    defer ast.deinit(allocator);
 
-    try parser.parse();
-
-    printAst(parser.ast, 0);
+    printAst(ast, 0);
 
     std.debug.print("\n", .{});
 
-    for (parser.errors.items) |error_value| {
+    for (ast.errors) |error_value| {
         switch (error_value.tag) {
             .expected_token => {
-                std.log.err("expected '{s}'", .{ error_value.data.expected_token.lexeme() orelse @tagName(error_value.data.expected_token) });
+                const loc = ast.tokenLocation(error_value.token);
+
+                std.log.err("src/test.glsl:{}:{}: expected '{s}'", .{ 
+                    loc.line,
+                    loc.column,
+                    error_value.data.expected_token.lexeme() orelse @tagName(error_value.data.expected_token),
+                });
             },
         }        
     }

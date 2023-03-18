@@ -1,51 +1,30 @@
+//! Implements the glsl preprocessor, which expands macros into larger token streams 
 
 allocator: std.mem.Allocator,
 tokenizer: Tokenizer,
-//TODO: move glsl version parsing/storage to Air
-version: GlslVersion,
 defines: std.StringArrayHashMapUnmanaged(Define),
 
-pub const Define = struct 
-{
+pub const Define = struct {
     start_token: u32,
 };
 
-pub fn init(allocator: std.mem.Allocator, source: []const u8) Preprocessor 
-{
+pub fn init(allocator: std.mem.Allocator, source: []const u8) Preprocessor {
     return .{
         .allocator = allocator,
         .tokenizer = .{ .source = source, .index = 0 },
-        .version = .unknown,
         .defines = .{},
     };
 }
 
-pub fn deinit(self: *Preprocessor) void 
-{
+pub fn deinit(self: *Preprocessor) void {
     defer self.* = undefined;
     defer self.defines.deinit(self.allocator);
 }
 
-pub fn tokenize(self: *Preprocessor) !std.MultiArrayList(Tokenizer.Token) {
-    var tokens = std.MultiArrayList(Tokenizer.Token) {};
-
-    while (self.tokenizer.next()) |token|
-    {
-        switch (token.tag) 
-        {
-            .directive_version => {
-                if (self.version != .unknown)
-                {
-                    //TODO: move to Sema to produce proper errors
-                    @panic("File can only specify one version");
-                }
-
-                const version_token = self.tokenizer.next() orelse break;
-
-                const version = std.meta.stringToEnum(GlslVersion, self.tokenizer.source[version_token.start..version_token.end]);
-
-                self.version = version orelse .unknown;
-            },
+pub fn tokenize(self: *Preprocessor, tokens: *Ast.TokenList) !void {
+    while (self.tokenizer.next()) |token| {
+        switch (token.tag) {
+            .directive_version => {},
             .directive_if => {
                 const identifier_token = self.tokenizer.next() orelse break;
 
@@ -78,7 +57,7 @@ pub fn tokenize(self: *Preprocessor) !std.MultiArrayList(Tokenizer.Token) {
                 try tokens.append(self.allocator, token);
             },
             .identifier => {
-                if (try self.tryExpandMacro(&tokens, token)) {
+                if (try self.tryExpandMacro(tokens, token)) {
 
                 } else {
                     try tokens.append(self.allocator, token);
@@ -89,8 +68,6 @@ pub fn tokenize(self: *Preprocessor) !std.MultiArrayList(Tokenizer.Token) {
             },
         }
     }
-
-    return tokens;
 }
 
 fn tryExpandMacro(self: *Preprocessor, tokens: *std.MultiArrayList(Tokenizer.Token), identifier_token: Tokenizer.Token) !bool {
@@ -126,4 +103,4 @@ fn tryExpandMacro(self: *Preprocessor, tokens: *std.MultiArrayList(Tokenizer.Tok
 const std = @import("std");
 const Preprocessor = @This();
 const Tokenizer = @import("Tokenizer.zig");
-const GlslVersion = @import("Air.zig").GlslVersion;
+const Ast = @import("Ast.zig");
