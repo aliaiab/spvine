@@ -16,6 +16,8 @@
 
 //adds two numbers, a and b
 float add(float a, float b) {
+    if (a == b) return 0;
+
     return a + b;
 }
 
@@ -23,7 +25,7 @@ float add(float a, float b) {
     entrypoint procedure
 */
 void ENTRY_ALIAS {
-    float res = add(1, 2 + 1);
+    float res = add(1, 2 + 1); //sus
 
     //clamp res to 1
     if (res > 1) {
