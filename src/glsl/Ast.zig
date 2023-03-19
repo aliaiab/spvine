@@ -3,6 +3,7 @@
 source: []const u8,
 tokens: TokenList.Slice,
 nodes: NodeList.Slice,
+extra_data: []const NodeIndex,
 errors: []const Error,
 
 pub fn deinit(self: *Ast, allocator: std.mem.Allocator) void {
@@ -10,6 +11,7 @@ pub fn deinit(self: *Ast, allocator: std.mem.Allocator) void {
     defer self.tokens.deinit(allocator);
     defer self.nodes.deinit(allocator);
     defer allocator.free(self.errors);
+    defer allocator.free(self.extra_data);
 }
 
 pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Ast {
@@ -37,19 +39,28 @@ pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Ast {
         .source = source,
         .tokens = token_list.toOwnedSlice(),
         .nodes = parser.nodes.toOwnedSlice(),
+        .extra_data = &.{},
         .errors = try parser.errors.toOwnedSlice(allocator),
     };
 }
 
+///Represents the location of a token in a source character stream
 pub const SourceLocation = struct {
+    ///The name of the source
+    source_name: []const u8,
+    ///Line number starting from 0
     line: u32,
+    ///Column number starting from 0
     column: u32,
+    ///The start of the line in the source character stream 
     line_start: u32,
+    ///The end of the line in the source character stream 
     line_end: u32,
 };
 
 pub fn tokenLocation(self: Ast, token_index: TokenIndex) SourceLocation {
     var loc = SourceLocation {
+        .source_name = "",
         .line = 0,
         .column = 0,
         .line_start = 0,
@@ -78,6 +89,12 @@ pub fn tokenLocation(self: Ast, token_index: TokenIndex) SourceLocation {
     return loc;
 }
 
+pub fn rootDecls(self: Ast) []const NodeIndex {
+    const data = self.nodes.items(.data)[0];
+
+    return self.extra_data[data.left..data.right];
+}
+
 pub const Error = struct {
     tag: Tag,
     token: Ast.TokenIndex,
@@ -95,36 +112,26 @@ pub const TokenIndex = u32;
 pub const NodeIndex = u32;
 
 pub const TokenList = std.MultiArrayList(Token);
-pub const NodeList = std.MultiArrayList(struct { tag: NodeTag, data: NodeData });
+pub const NodeList = std.MultiArrayList(Node);
 
-///Simple node structure, could be stored more in a more compact
-///Format akin to std.zig.Ast
-pub const NodeData = union {
-    nil: void,
-    generic: struct {
-        left: NodeIndex = 0,
-        right: NodeIndex = 0,
-    },
-    proc_decl: struct {
-        prototype: NodeIndex = 0,
-        body: NodeIndex = 0, 
-    },
-    proc_prototype: struct {
-        return_type_token: TokenIndex = 0,
-        params: []NodeIndex = &.{},
-        name_token: TokenIndex = 0, 
-    },
-    compound_statement: struct {
-        statements: []NodeIndex = &.{},
-    },
-};
+pub const Node = struct {
+    tag: Tag,
+    main_token: TokenIndex,
+    data: Data,
 
-pub const NodeTag = enum(u8) {
-    nil,
-    generic,
-    proc_decl,
-    proc_prototype,
-    compound_statement,
+    pub const Data = struct { 
+        left: NodeIndex,
+        right: NodeIndex,
+    };
+
+    pub const Tag = enum(u8) {
+        nil,
+        root,
+        proc_decl,
+        proc_prototype,
+        compound_statement,  
+        type_expr,
+    };
 };
 
 const std = @import("std");

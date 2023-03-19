@@ -1,6 +1,8 @@
 //! The analysed intermediate representation for glsl
 //! Produced by IR generation from the analysed Ast produced by Sema
 
+glsl_version: GlslVersion,
+
 ///Glsl source version/profile as defined by the OpenGL Language Specification
 pub const GlslVersion = enum {
     unknown,

@@ -16,7 +16,7 @@
 
 //adds two numbers, a and b
 float add(float a, float b) {
-    return a ADD b;
+    return a + b;
 }
 
 /* 
