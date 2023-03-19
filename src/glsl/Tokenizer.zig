@@ -281,10 +281,6 @@ pub fn next(self: *Tokenizer) ?Token {
 
     token.end = self.index;
 
-    const log = std.log.scoped(.tokenizer);
-
-    log.info("token: {s} '{s}'", .{ @tagName(token.tag), self.source[token.start..token.end] });
-
     return token;
 }
 
