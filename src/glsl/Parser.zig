@@ -48,6 +48,8 @@ pub fn parse(self: *Parser) !void {
     log.info("begin:", .{});
     defer log.info("end", .{});
 
+    const root_members_start = self.extra_data.items.len; 
+
     while (self.token_index < self.token_tags.len) {
         switch (state) {
             .start => switch (self.token_tags[self.token_index]) {
@@ -76,9 +78,11 @@ pub fn parse(self: *Parser) !void {
                 => {
                     std.log.info("Found type expr", .{});
 
-                    _ = self.parseProcedure() catch {
-                        _ = self.nextToken();
-                    };
+                    const proc = try self.parseProcedure();
+
+                    if (proc != 0) {
+                        try self.extra_data.append(self.allocator, proc);
+                    }
                 },
                 else => {
                     _ = self.nextToken();
@@ -95,6 +99,15 @@ pub fn parse(self: *Parser) !void {
             },
         }        
     }
+
+    _ = self.setNode(0, .{
+        .tag = .root,
+        .data = .{
+            .left = @intCast(u32, root_members_start),
+            .right = @intCast(u32, self.extra_data.items.len),
+        },
+        .main_token = 0,
+    });
 }
 
 pub fn parseProcedure(self: *Parser) !Ast.NodeIndex {
@@ -114,31 +127,38 @@ pub fn parseProcedure(self: *Parser) !Ast.NodeIndex {
 
     log.info("identifier = {s}", .{ self.source[self.token_starts[identifier]..self.token_ends[identifier]] });
 
-    _ = try self.expectToken(.left_paren);
+    _ = self.expectToken(.left_paren) catch return 0;
 
-    self.parseParamList() catch {};
+    const param_list = self.parseParamList() catch return 0;
+
+    if (param_list == 0) return 0;
 
     _ = try self.expectToken(.right_paren);
+
+    try self.parseStatement();
 
     _ = try self.expectToken(.left_brace);
 
     try self.parseStatement();
 
-    _ = try self.expectToken(.right_brace);
+    _ = self.expectToken(.right_brace) catch return 0;
 
     return node_index;
 }
 
-pub fn parseParamList(self: *Parser) !void {
+pub fn parseParamList(self: *Parser) !Ast.NodeIndex {
     const log = std.log.scoped(.parseParamList);
 
     log.info("begin:", .{});
     defer log.info("end", .{});
 
-    while (true) {
-        _ = try self.parseTypeExpr();
+    const node = try self.reserveNode(.param_expr);
+    errdefer self.unreserveNode(node);
 
-        const param_identifier = try self.expectToken(.identifier);
+    while (true) {
+        _ = self.parseTypeExpr() catch return 0;
+
+        const param_identifier = self.expectToken(.identifier) catch return 0;
 
         std.log.info("param_list: param_identifier = {s}", .{ self.source[self.token_starts[param_identifier]..self.token_ends[param_identifier]] });
 
@@ -147,10 +167,15 @@ pub fn parseParamList(self: *Parser) !void {
             break;
         }
     }
+
+    return node;
 }
 
-pub fn parseStatement(self: *Parser) !void 
-{
+pub fn parseStatementList(self: *Parser) !void { 
+    _ = self;    
+}
+
+pub fn parseStatement(self: *Parser) !void {
     const log = std.log.scoped(.parseStatement);
 
     log.info("begin:", .{});
@@ -171,8 +196,7 @@ pub fn parseStatement(self: *Parser) !void
     }
 }
 
-pub fn parseExpression(self: *Parser) !Ast.NodeIndex
-{
+pub fn parseExpression(self: *Parser) !Ast.NodeIndex {
     const log = std.log.scoped(.parseExpression);
 
     log.info("begin:", .{});
@@ -192,7 +216,6 @@ pub fn parseExpression(self: *Parser) !Ast.NodeIndex
 }
 
 pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
-
     switch (self.token_tags[self.token_index]) {
         .keyword_void,
         .keyword_int,
@@ -212,11 +235,6 @@ pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
         },
         else => {},
     }
-
-    _ = 
-        self.eatToken(.keyword_void) orelse 
-        self.eatToken(.keyword_int) orelse
-        self.eatToken(.keyword_float) orelse return error.ExpectedToken;
 
     return 0;
 }

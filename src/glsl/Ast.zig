@@ -21,7 +21,9 @@ pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Ast {
     var preprocessor = Preprocessor.init(allocator, source);
     defer preprocessor.deinit();
 
-    try preprocessor.tokenize(&token_list);
+    var errors: std.ArrayListUnmanaged(Error) = .{};
+
+    try preprocessor.tokenize(&token_list, &errors);
 
     var defines = preprocessor.defines.iterator();
 
@@ -31,6 +33,7 @@ pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Ast {
     }
 
     var parser = Parser.init(allocator, source, token_list.slice());
+    parser.errors = errors;
     defer parser.deinit();
 
     try parser.parse();
@@ -104,6 +107,7 @@ pub const Error = struct {
     } = .{ .none = {} },
 
     pub const Tag = enum(u8) {
+        directive_error,
         expected_token,
     };
 };
@@ -131,6 +135,7 @@ pub const Node = struct {
         proc_prototype,
         compound_statement,  
         type_expr,
+        param_expr,
     };
 };
 
