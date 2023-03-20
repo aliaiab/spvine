@@ -21,23 +21,64 @@ pub fn deinit(self: *Preprocessor) void {
     defer self.defines.deinit(self.allocator);
 }
 
-pub fn tokenize(self: *Preprocessor, tokens: *Ast.TokenList) !void {
-    while (self.tokenizer.next()) |token| {
+pub fn tokenize(self: *Preprocessor, tokens: *Ast.TokenList, errors: *std.ArrayListUnmanaged(Ast.Error)) !void {
+    var if_condition: bool = true;
+    var if_condition_level: u32 = 0;
+
+    var current_if_level: u32 = 0; 
+
+    while (self.tokenizer.next()) |token| {     
         switch (token.tag) {
             .directive_version => {},
             .directive_if => {
+                current_if_level += 1;
+
+                if (!if_condition) continue; 
+
                 const identifier_token = self.tokenizer.next() orelse break;
 
                 const string = self.tokenizer.source[identifier_token.start..identifier_token.end];
 
                 const define = self.defines.get(string) orelse return error.UndefinedMacro;
 
-                const value_token = define.start_token;
+                const value_token = tokens.get(define.start_token);
 
-                _ = value_token;
+                const value = try std.fmt.parseUnsigned(u64, self.tokenizer.source[value_token.start..value_token.end], 10);
+
+                if_condition = value == 1;
+                if_condition_level += 1;
             },
-            .directive_endif => {},
+            .directive_ifdef => {
+                current_if_level += 1;
+
+                if (!if_condition) continue; 
+
+                const identifier_token = self.tokenizer.next() orelse break;
+
+                const string = self.tokenizer.source[identifier_token.start..identifier_token.end];
+
+                if_condition = self.defines.contains(string);
+                if_condition_level += 1;
+            },
+            .directive_ifndef => {
+                current_if_level += 1;
+
+                if (!if_condition) continue; 
+
+                const identifier_token = self.tokenizer.next() orelse break;
+
+                const string = self.tokenizer.source[identifier_token.start..identifier_token.end];
+
+                if_condition = !self.defines.contains(string);
+                if_condition_level += 1;
+            },
+            .directive_endif => {
+                if_condition = true;
+                if_condition_level -= 1;
+            },
             .directive_define => {
+                if (!if_condition) continue; 
+
                 const identifier_token = self.tokenizer.next() orelse break;
 
                 const string = self.tokenizer.source[identifier_token.start..identifier_token.end];
@@ -53,10 +94,24 @@ pub fn tokenize(self: *Preprocessor, tokens: *Ast.TokenList) !void {
 
                 try tokens.append(self.allocator, self.tokenizer.next() orelse break);
             },
+            .directive_error => {
+                if (!if_condition) continue; 
+
+                try errors.append(self.allocator, .{
+                    .tag = .directive_error,
+                    .token = @intCast(u32, tokens.len),
+                });
+
+                try tokens.append(self.allocator, token);
+            },
             .directive_end => {
+                if (!if_condition) continue; 
+
                 try tokens.append(self.allocator, token);
             },
             .identifier => {
+                if (!if_condition) continue; 
+
                 if (try self.tryExpandMacro(tokens, token)) {
 
                 } else {
@@ -64,6 +119,8 @@ pub fn tokenize(self: *Preprocessor, tokens: *Ast.TokenList) !void {
                 }
             },
             else => {
+                if (!if_condition) continue; 
+
                 try tokens.append(self.allocator, token);
             },
         }

@@ -282,7 +282,7 @@ pub fn next(self: *Tokenizer) ?Token {
     token.end = self.index;
 
     return token;
-}
+} 
 
 pub const Token = struct {
     start: u32,
