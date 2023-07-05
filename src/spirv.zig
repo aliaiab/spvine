@@ -1,3 +1,11 @@
+pub const Iterator = @import("spirv/Iterator.zig");
+pub const reflect = @import("spirv/reflect.zig");
+
+///The size of a word in an opcode stream
+pub const Word = enum(WordInt) { _ };
+///The integer representation of a spirv word
+pub const WordInt = u32;
+
 pub const SourceLanguage = enum(u32) {
     unknown = 0,
     essl = 1,
@@ -1303,6 +1311,26 @@ pub const Op = enum(u32) {
     GroupLogicalAndKHR = 6406,
     GroupLogicalOrKHR = 6407,
     GroupLogicalXorKHR = 6408,
+};
+
+///Convient representation of an operation
+///This should be thought of as a "fat" IR for spirv
+///Not all are ops supported yet
+pub const OpInstruction = union(enum) {
+    entry_point: struct {
+        name: []const u8,
+    },
+    execution_mode: void,
+    execution_mode_id: void,
+    decorate: struct {
+        id: WordInt,
+        decoration: Decoration,
+        value: WordInt,
+    },
+    constant: struct {
+        type_id: WordInt,
+        storage_class: StorageClass,
+    },
 };
 
 pub const magic_number: u32 = 119734787;
