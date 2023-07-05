@@ -1,4 +1,5 @@
 pub const glsl = @import("glsl.zig");
+pub const spirv = @import("spirv.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
