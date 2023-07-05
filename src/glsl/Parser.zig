@@ -11,7 +11,7 @@ errors: std.ArrayListUnmanaged(Ast.Error),
 extra_data: std.ArrayListUnmanaged(Ast.NodeIndex),
 
 pub fn init(
-    allocator: std.mem.Allocator, 
+    allocator: std.mem.Allocator,
     source: []const u8,
     tokens: Ast.TokenList.Slice,
 ) Parser {
@@ -34,7 +34,7 @@ pub fn deinit(self: *Parser) void {
     defer self.errors.deinit(self.allocator);
 }
 
-///Root parse node 
+///Root parse node
 pub fn parse(self: *Parser) !void {
     const log = std.log.scoped(.parse);
 
@@ -48,7 +48,7 @@ pub fn parse(self: *Parser) !void {
     log.info("begin:", .{});
     defer log.info("end", .{});
 
-    const root_members_start = self.extra_data.items.len; 
+    const root_members_start = self.extra_data.items.len;
 
     while (self.token_index < self.token_tags.len) {
         switch (state) {
@@ -97,14 +97,14 @@ pub fn parse(self: *Parser) !void {
                     _ = self.nextToken();
                 },
             },
-        }        
+        }
     }
 
     _ = self.setNode(0, .{
         .tag = .root,
         .data = .{
-            .left = @intCast(u32, root_members_start),
-            .right = @intCast(u32, self.extra_data.items.len),
+            .left = @as(u32, @intCast(root_members_start)),
+            .right = @as(u32, @intCast(self.extra_data.items.len)),
         },
         .main_token = 0,
     });
@@ -125,7 +125,7 @@ pub fn parseProcedure(self: *Parser) !Ast.NodeIndex {
 
     const identifier = self.eatToken(.identifier) orelse return 0;
 
-    log.info("identifier = {s}", .{ self.source[self.token_starts[identifier]..self.token_ends[identifier]] });
+    log.info("identifier = {s}", .{self.source[self.token_starts[identifier]..self.token_ends[identifier]]});
 
     _ = self.expectToken(.left_paren) catch return 0;
 
@@ -160,10 +160,9 @@ pub fn parseParamList(self: *Parser) !Ast.NodeIndex {
 
         const param_identifier = self.expectToken(.identifier) catch return 0;
 
-        std.log.info("param_list: param_identifier = {s}", .{ self.source[self.token_starts[param_identifier]..self.token_ends[param_identifier]] });
+        std.log.info("param_list: param_identifier = {s}", .{self.source[self.token_starts[param_identifier]..self.token_ends[param_identifier]]});
 
-        if (self.eatToken(.comma) == null)
-        {
+        if (self.eatToken(.comma) == null) {
             break;
         }
     }
@@ -171,8 +170,8 @@ pub fn parseParamList(self: *Parser) !Ast.NodeIndex {
     return node;
 }
 
-pub fn parseStatementList(self: *Parser) !void { 
-    _ = self;    
+pub fn parseStatementList(self: *Parser) !void {
+    _ = self;
 }
 
 pub fn parseStatement(self: *Parser) !void {
@@ -230,7 +229,10 @@ pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
             return self.setNode(node, .{
                 .tag = .type_expr,
                 .main_token = self.token_index,
-                .data = .{ .left = 0, .right = 0, },
+                .data = .{
+                    .left = 0,
+                    .right = 0,
+                },
             });
         },
         else => {},
@@ -244,26 +246,24 @@ pub fn addNode(self: *Parser, allocator: std.mem.Allocator, tag: Ast.Node.Tag) !
 
     self.nodes.items(.tag)[index] = tag;
 
-    return @intCast(Ast.NodeIndex, index);
+    return @as(Ast.NodeIndex, @intCast(index));
 }
 
-pub fn setNode(p: *Parser, i: usize, elem: Ast.NodeList.Elem) Ast.NodeIndex {
+pub fn setNode(p: *Parser, i: usize, elem: Ast.Node) Ast.NodeIndex {
     p.nodes.set(i, elem);
-    return @intCast(Ast.NodeIndex, i);
+    return @as(Ast.NodeIndex, @intCast(i));
 }
 
 pub fn reserveNode(self: *Parser, tag: Ast.Node.Tag) !Ast.NodeIndex {
     try self.nodes.resize(self.allocator, self.nodes.len + 1);
     self.nodes.items(.tag)[self.nodes.len - 1] = tag;
-    return @intCast(Ast.NodeIndex, self.nodes.len - 1);
+    return @as(Ast.NodeIndex, @intCast(self.nodes.len - 1));
 }
 
-pub fn unreserveNode(self: *Parser, node: Ast.NodeIndex) void 
-{
+pub fn unreserveNode(self: *Parser, node: Ast.NodeIndex) void {
     if (node == self.nodes.len) {
         self.nodes.resize(self.allocator, self.nodes.len - 1) catch unreachable;
-    }
-    else {
+    } else {
         self.nodes.items(.tag)[node] = .nil;
     }
 }
@@ -286,15 +286,12 @@ pub fn tokenIndexString(self: Parser, token_index: u32) []const u8 {
 
 pub fn tokenString(self: Parser, token: Token) []const u8 {
     return self.preprocessor.tokenizer.source[token.start..token.end];
-} 
+}
 
 pub fn eatToken(self: *Parser, tag: Token.Tag) ?u32 {
-    if (self.token_index < self.token_tags.len and self.token_tags[self.token_index] == tag)
-    {
+    if (self.token_index < self.token_tags.len and self.token_tags[self.token_index] == tag) {
         return self.nextToken();
-    }
-    else 
-    {
+    } else {
         return null;
     }
 }
@@ -303,8 +300,7 @@ pub fn nextToken(self: *Parser) ?u32 {
     const result = self.token_index;
     self.token_index += 1;
 
-    if (result >= self.token_tags.len)
-    {
+    if (result >= self.token_tags.len) {
         return null;
     }
 

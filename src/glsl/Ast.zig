@@ -15,7 +15,7 @@ pub fn deinit(self: *Ast, allocator: std.mem.Allocator) void {
 }
 
 pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Ast {
-    var token_list = TokenList {};
+    var token_list = TokenList{};
     defer token_list.deinit(allocator);
 
     var preprocessor = Preprocessor.init(allocator, source);
@@ -27,8 +27,7 @@ pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Ast {
 
     var defines = preprocessor.defines.iterator();
 
-    while (defines.next()) |define|
-    {
+    while (defines.next()) |define| {
         std.log.info("define: {s} = .{s}", .{ define.key_ptr.*, @tagName(token_list.items(.tag)[define.value_ptr.start_token]) });
     }
 
@@ -38,7 +37,7 @@ pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Ast {
 
     try parser.parse();
 
-    return Ast {
+    return Ast{
         .source = source,
         .tokens = token_list.toOwnedSlice(),
         .nodes = parser.nodes.toOwnedSlice(),
@@ -55,14 +54,14 @@ pub const SourceLocation = struct {
     line: u32,
     ///Column number starting from 0
     column: u32,
-    ///The start of the line in the source character stream 
+    ///The start of the line in the source character stream
     line_start: u32,
-    ///The end of the line in the source character stream 
+    ///The end of the line in the source character stream
     line_end: u32,
 };
 
 pub fn tokenLocation(self: Ast, token_index: TokenIndex) SourceLocation {
-    var loc = SourceLocation {
+    var loc = SourceLocation{
         .source_name = "",
         .line = 0,
         .column = 0,
@@ -74,7 +73,7 @@ pub fn tokenLocation(self: Ast, token_index: TokenIndex) SourceLocation {
 
     for (self.source, 0..) |c, i| {
         if (i == token_start) {
-            loc.line_end = @intCast(u32, i);
+            loc.line_end = @as(u32, @intCast(i));
             while (loc.line_end < self.source.len and self.source[loc.line_end] != '\n') {
                 loc.line_end += 1;
             }
@@ -83,7 +82,7 @@ pub fn tokenLocation(self: Ast, token_index: TokenIndex) SourceLocation {
         if (c == '\n') {
             loc.line += 1;
             loc.column = 0;
-            loc.line_start = @intCast(u32, i) + 1;
+            loc.line_start = @as(u32, @intCast(i)) + 1;
         } else {
             loc.column += 1;
         }
@@ -123,7 +122,7 @@ pub const Node = struct {
     main_token: TokenIndex,
     data: Data,
 
-    pub const Data = struct { 
+    pub const Data = struct {
         left: NodeIndex,
         right: NodeIndex,
     };
@@ -133,7 +132,7 @@ pub const Node = struct {
         root,
         proc_decl,
         proc_prototype,
-        compound_statement,  
+        compound_statement,
         type_expr,
         param_expr,
     };

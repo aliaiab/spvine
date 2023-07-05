@@ -1,4 +1,3 @@
-
 pub fn build(builder: *std.Build) void {
     const target = builder.standardTargetOptions(.{});
 
@@ -11,7 +10,7 @@ pub fn build(builder: *std.Build) void {
         .optimize = optimize,
     });
 
-    exe.install();
+    builder.installArtifact(exe);
 
     const run_cmd = builder.addRunArtifact(exe);
 

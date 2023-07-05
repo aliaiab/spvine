@@ -22,9 +22,7 @@ pub const GlslVersion = enum {
     @"450",
 };
 
-pub const GlslExtension = enum {
-
-};
+pub const GlslExtension = enum {};
 
 pub const Instruction = struct {
     tag: Tag,
