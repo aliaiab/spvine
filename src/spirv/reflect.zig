@@ -18,7 +18,7 @@ pub const Result = struct {
     };
 };
 
-pub fn parse(allocator: std.mem.Allocator, module: []const u8) !void {
+pub fn parse(allocator: std.mem.Allocator, module: []align(4) const u8) !void {
     var iterator = Iterator.initFromSlice(module);
 
     var result = Result{
@@ -62,8 +62,6 @@ pub fn parse(allocator: std.mem.Allocator, module: []const u8) !void {
                 const name = std.mem.span(name_begin);
 
                 result.entry_point = name;
-
-                return error.Sus;
             },
             .Decorate => {},
             .TypeStruct,
@@ -82,7 +80,7 @@ pub fn parse(allocator: std.mem.Allocator, module: []const u8) !void {
 }
 
 test "parse" {
-    try parse(std.testing.allocator, @embedFile("../test.spv"));
+    try parse(std.testing.allocator, @alignCast(@embedFile("../test.spv")));
 }
 
 const std = @import("std");
