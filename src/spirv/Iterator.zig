@@ -2,7 +2,7 @@ module: []const spirv.WordInt,
 ///The opcodes start at position 5
 index: usize = 5,
 
-pub fn initFromSlice(slice: []const u8) Iterator {
+pub fn initFromSlice(slice: []align(4) const u8) Iterator {
     return .{
         .module = @as([*]const spirv.WordInt, @ptrCast(@alignCast(slice.ptr)))[0 .. slice.len / 4],
     };
