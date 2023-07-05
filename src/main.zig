@@ -1,9 +1,8 @@
-
 pub const glsl = @import("glsl.zig");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}) {};
-    defer std.debug.assert(!gpa.deinit());
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() != .leak);
 
     const allocator = gpa.allocator();
 
@@ -45,23 +44,15 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
                 }) catch {};
             },
             .expected_token => {
-                stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error{s}:" ++ terminal_bold ++ " expected '{s}', found '{s}'\n" ++ color_end, .{
-                    file_path,
-                    loc.line + 1,
-                    loc.column,
-                    terminal_red,
-                    color_end,
-                    error_value.data.expected_token.lexeme() orelse @tagName(error_value.data.expected_token),
-                    found_token.lexeme() orelse @tagName(found_token)
-                }) catch {};
+                stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error{s}:" ++ terminal_bold ++ " expected '{s}', found '{s}'\n" ++ color_end, .{ file_path, loc.line + 1, loc.column, terminal_red, color_end, error_value.data.expected_token.lexeme() orelse @tagName(error_value.data.expected_token), found_token.lexeme() orelse @tagName(found_token) }) catch {};
             },
         }
 
         const source_line = ast.source[loc.line_start..loc.line_end];
 
-        var tokenizer = Tokenizer { .source = source_line, .index = 0 };
+        var tokenizer = Tokenizer{ .source = source_line, .index = 0 };
 
-        var last_token: ?Tokenizer.Token = null; 
+        var last_token: ?Tokenizer.Token = null;
 
         while (tokenizer.next()) |token| {
             if (last_token != null) {
@@ -117,7 +108,7 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
                 => {
                     stderr.print(terminal_blue ++ "{s}" ++ color_end, .{
                         token.lexeme() orelse source_line[token.start..token.end],
-                    }) catch {};  
+                    }) catch {};
                 },
                 .keyword_return,
                 .keyword_discard,
@@ -136,27 +127,27 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
                 => {
                     stderr.print(terminal_purple ++ "{s}" ++ color_end, .{
                         token.lexeme() orelse source_line[token.start..token.end],
-                    }) catch {};  
+                    }) catch {};
                 },
                 .left_brace,
                 .right_brace,
                 => {
                     stderr.print(terminal_yellow ++ "{s}" ++ color_end, .{
                         token.lexeme() orelse source_line[token.start..token.end],
-                    }) catch {};  
+                    }) catch {};
                 },
                 .literal_number => {
                     stderr.print(terminal_green ++ "{s}" ++ color_end, .{
                         token.lexeme() orelse source_line[token.start..token.end],
-                    }) catch {};  
+                    }) catch {};
                 },
                 else => {
                     stderr.print("{s}", .{
                         token.lexeme() orelse source_line[token.start..token.end],
                     }) catch {};
-                }
+                },
             }
-        
+
             last_token = token;
         }
 
@@ -194,11 +185,11 @@ fn printAst(ast: Ast, node: Ast.NodeIndex, depth: u32) void {
             for (ast.extra_data[ast.nodes.items(.data)[node].left..ast.nodes.items(.data)[node].right]) |child| {
                 printAst(ast, child, depth + 1);
             }
-        }, 
-        else => {
-            std.log.info("node: {s}", .{ @tagName(node_tag) });
         },
-    } 
+        else => {
+            std.log.info("node: {s}", .{@tagName(node_tag)});
+        },
+    }
 }
 
 test {

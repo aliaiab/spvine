@@ -18,8 +18,8 @@ state: enum {
 } = .start,
 is_directive: bool = false,
 
-pub fn next(self: *Tokenizer) ?Token {    
-    var token = Token { .start = self.index, .end = self.index, .tag = .end };
+pub fn next(self: *Tokenizer) ?Token {
+    var token = Token{ .start = self.index, .end = self.index, .tag = .end };
 
     var multi_comment_level: usize = 0;
 
@@ -29,23 +29,25 @@ pub fn next(self: *Tokenizer) ?Token {
         switch (self.state) {
             .start => switch (char) {
                 0 => return null,
-                ' ', '\t', => {
+                ' ',
+                '\t',
+                => {
                     token.start = self.index + 1;
                 },
                 '\r', '\n' => {
-                    if (!self.is_directive)
-                    {
+                    if (!self.is_directive) {
                         token.start = self.index + 1;
-                    }
-                    else 
-                    {
+                    } else {
                         token.tag = .directive_end;
                         self.is_directive = false;
                         self.index += 1;
                         break;
                     }
                 },
-                'a'...'z', 'A'...'Z', '_', => {
+                'a'...'z',
+                'A'...'Z',
+                '_',
+                => {
                     self.state = .identifier;
                 },
                 '#' => {
@@ -120,14 +122,16 @@ pub fn next(self: *Tokenizer) ?Token {
                 else => {},
             },
             .directive_start => switch (char) {
-                'a'...'z', 'A'...'Z', '_', => {},
+                'a'...'z',
+                'A'...'Z',
+                '_',
+                => {},
                 else => {
                     const string = self.source[token.start..self.index];
 
-                    if (Token.getDirective(string)) |directive_tag|
-                    {
+                    if (Token.getDirective(string)) |directive_tag| {
                         token.tag = directive_tag;
-                    }                    
+                    }
 
                     self.state = .start;
                     self.is_directive = true;
@@ -140,12 +144,9 @@ pub fn next(self: *Tokenizer) ?Token {
                 else => {
                     const string = self.source[token.start..self.index];
 
-                    if (Token.getKeyword(string)) |keyword_tag|
-                    {
+                    if (Token.getKeyword(string)) |keyword_tag| {
                         token.tag = keyword_tag;
-                    }
-                    else 
-                    {
+                    } else {
                         token.tag = .identifier;
                     }
 
@@ -233,7 +234,7 @@ pub fn next(self: *Tokenizer) ?Token {
                     break;
                 },
             },
-            .backward_slash => switch(char) {
+            .backward_slash => switch (char) {
                 '\n', '\r' => {
                     self.state = .start;
                 },
@@ -242,29 +243,24 @@ pub fn next(self: *Tokenizer) ?Token {
             .single_comment => switch (char) {
                 '\n' => {
                     self.state = .start;
-                    token.start = self.index + 1;  
+                    token.start = self.index + 1;
                 },
                 else => {},
             },
             .multi_comment => switch (char) {
                 '*' => {
-                    if (self.source[self.index + 1] == '/')
-                    {
+                    if (self.source[self.index + 1] == '/') {
                         self.index += 1;
 
-                        if (multi_comment_level == 0)
-                        {
+                        if (multi_comment_level == 0) {
                             self.state = .start;
-                        }
-                        else 
-                        {
+                        } else {
                             multi_comment_level -= 1;
                         }
                     }
                 },
                 '/' => {
-                    if (self.source[self.index + 1] == '*')
-                    {
+                    if (self.source[self.index + 1] == '*') {
                         self.index += 1;
                         multi_comment_level += 1;
                     }
@@ -274,15 +270,14 @@ pub fn next(self: *Tokenizer) ?Token {
         }
     }
 
-    if (token.tag == .end or self.index > self.source.len)
-    {
+    if (token.tag == .end or self.index > self.source.len) {
         return null;
     }
 
     token.end = self.index;
 
     return token;
-} 
+}
 
 pub const Token = struct {
     start: u32,
@@ -440,7 +435,7 @@ pub const Token = struct {
                 .keyword_case => "case",
                 .keyword_default => "default",
                 .keyword_return => "return",
-                .keyword_discard => "discard", 
+                .keyword_discard => "discard",
                 .keyword_in => "in",
                 .keyword_out => "out",
                 .keyword_inout => "inout",
@@ -550,15 +545,18 @@ pub const Token = struct {
 test "Basic Vertex shader" {
     const expect = std.testing.expect;
 
-    const source = 
-    \\#version 450
-    \\
-    \\void main() {
-    \\gl_Position = vec4(0.5, 0.5, 0.5, 1.0);
-    \\}
+    const source =
+        \\#version 450
+        \\
+        \\void main() {
+        \\gl_Position = vec4(0.5, 0.5, 0.5, 1.0);
+        \\}
     ;
 
-    var tokenizer = Tokenizer { .source = source, .index = 0, };
+    var tokenizer = Tokenizer{
+        .source = source,
+        .index = 0,
+    };
 
     try expect(tokenizer.next().?.tag == .directive_version);
     try expect(tokenizer.next().?.tag == .literal_number);

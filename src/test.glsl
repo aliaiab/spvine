@@ -44,9 +44,7 @@ void ENTRY {
     int res_as_int = int(res); /* here is an cast to int */
 
     res_as_int *= 3;
-
     res_as_int = res_as_int * 10;
-
     res_as_int /= 2 + 3;
 
     gl_Position = vec4(0);
