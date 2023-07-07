@@ -21,7 +21,7 @@ pub fn next(self: *Iterator) ?OpData {
     const start_index = self.index;
     const word = self.module[start_index];
 
-    const instruction_opcode = @as(spirv.Op, @enumFromInt(@as(u16, @truncate(word))));
+    const instruction_opcode = @as(spirv.Op, @enumFromInt(@as(u32, @as(u16, @truncate(word)))));
     const instruction_word_count = @as(u16, @truncate(word >> 16));
 
     self.index += instruction_word_count;
