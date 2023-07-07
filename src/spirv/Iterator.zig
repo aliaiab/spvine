@@ -28,7 +28,7 @@ pub fn next(self: *Iterator) ?OpData {
 
     return .{
         .op = instruction_opcode,
-        .words = self.module[start_index .. start_index + instruction_word_count],
+        .words = self.module[start_index..][0..instruction_word_count],
     };
 }
 
