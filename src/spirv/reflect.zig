@@ -23,6 +23,8 @@ pub const Result = struct {
 pub fn parse(allocator: std.mem.Allocator, result: *Result, module: []align(4) const u8) !void {
     var iterator = Iterator.initFromSlice(module);
 
+    std.debug.assert(iterator.module[0] == spirv.magic_number);
+
     const id_count = iterator.module[3];
 
     const Id = struct {
