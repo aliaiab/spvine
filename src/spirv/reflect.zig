@@ -9,7 +9,7 @@ pub const Result = struct {
     local_size_x: u32 = 0,
     local_size_y: u32 = 0,
     local_size_z: u32 = 0,
-    resources: [32]Resource = undefined,
+    resources: [32]Resource = std.mem.zeroes([32]Resource),
     resource_count: u32 = 0,
     resource_mask: u32 = 0,
 
