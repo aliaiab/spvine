@@ -9,7 +9,9 @@ pub const Result = struct {
     local_size_x: u32 = 0,
     local_size_y: u32 = 0,
     local_size_z: u32 = 0,
-    resources: []Resource,
+    resources: [32]Resource = undefined,
+    resource_count: u32 = 0,
+    resource_mask: u32 = 0,
 
     const Resource = struct {
         descriptor_type: spirv.Op,
@@ -22,7 +24,6 @@ pub fn parse(allocator: std.mem.Allocator, module: []align(4) const u8) !void {
     var iterator = Iterator.initFromSlice(module);
 
     var result = Result{
-        .resources = &.{},
         .entry_point = "",
         .source_language = undefined,
         .execution_model = undefined,
@@ -34,9 +35,9 @@ pub fn parse(allocator: std.mem.Allocator, module: []align(4) const u8) !void {
     const id_count = iterator.module[3];
 
     const Id = struct {
-        opcode: u32,
+        opcode: spirv.Op,
         type_id: u32,
-        storage_class: u32,
+        storage_class: spirv.StorageClass,
         binding: u32,
         set: u32,
         constant: u32,
@@ -57,24 +58,104 @@ pub fn parse(allocator: std.mem.Allocator, module: []align(4) const u8) !void {
 
                 const name_begin = @as([*:0]const u8, @ptrCast(&op_data.words[3]));
 
-                std.log.info("{c}", .{name_begin[1]});
-
                 const name = std.mem.span(name_begin);
 
                 result.entry_point = name;
             },
-            .Decorate => {},
+            .Decorate => {
+                const id = op_data.words[1];
+
+                std.debug.assert(id < id_count);
+
+                switch (@as(spirv.Decoration, @enumFromInt(op_data.words[2]))) {
+                    .DescriptorSet => {
+                        std.log.info("Found descriptor set '{}'", .{op_data.words[3]});
+
+                        ids[id].set = op_data.words[3];
+                    },
+                    .Binding => {
+                        std.log.info("Found descriptor set binding '{}'", .{op_data.words[3]});
+
+                        ids[id].binding = op_data.words[3];
+                    },
+                    else => {},
+                }
+            },
             .TypeStruct,
             .TypeImage,
             .TypeSampler,
             .TypeSampledImage,
             .TypeArray,
             .TypeRuntimeArray,
-            => {},
-            .TypePointer => {},
-            .Constant => {},
-            .Variable => {},
+            => {
+                std.log.info("Found shader descriptor", .{});
+
+                const id = op_data.words[1];
+
+                ids[id].opcode = op_data.op;
+
+                switch (op_data.op) {
+                    .TypeArray => {
+                        ids[id].opcode = ids[op_data.words[2]].opcode;
+                        ids[id].array_length = ids[op_data.words[3]].constant;
+                    },
+                    else => {},
+                }
+            },
+            .TypePointer => {
+                const id = op_data.words[1];
+
+                ids[id].opcode = op_data.op;
+                ids[id].type_id = op_data.words[3];
+                ids[id].storage_class = @as(spirv.StorageClass, @enumFromInt(op_data.words[2]));
+            },
+            .Constant => {
+                const id = op_data.words[2];
+
+                ids[id].opcode = op_data.op;
+                ids[id].type_id = op_data.words[1];
+                ids[id].constant = op_data.words[3];
+
+                std.log.info("spirv const = {}", .{ids[id].constant});
+            },
+            .Variable => {
+                const id = op_data.words[2];
+
+                ids[id].opcode = op_data.op;
+                ids[id].type_id = op_data.words[1];
+                ids[id].storage_class = @as(spirv.StorageClass, @enumFromInt(op_data.words[3]));
+            },
             else => {},
+        }
+    }
+
+    id_loop: for (ids) |id| {
+        if (id.opcode == .Variable and
+            (id.storage_class == .Uniform or
+            id.storage_class == .UniformConstant or
+            id.storage_class == .StorageBuffer or
+            id.storage_class == .Image))
+        {
+            const type_kind = ids[ids[id.type_id].type_id].opcode;
+            const array_length = ids[ids[id.type_id].type_id].array_length;
+            const resource_type = type_kind;
+
+            {
+                for (result.resources) |resource| {
+                    if (resource.binding == id.binding and resource.descriptor_type == resource_type) {
+                        continue :id_loop;
+                    }
+                }
+            }
+
+            result.resources[result.resource_count] = .{
+                .descriptor_type = resource_type,
+                .descriptor_count = array_length,
+                .binding = id.binding,
+            };
+
+            result.resource_mask |= @as(u32, 1) << @as(u5, @intCast(id.binding));
+            result.resource_count += 1;
         }
     }
 }
