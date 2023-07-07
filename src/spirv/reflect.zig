@@ -20,17 +20,8 @@ pub const Result = struct {
     };
 };
 
-pub fn parse(allocator: std.mem.Allocator, module: []align(4) const u8) !void {
+pub fn parse(allocator: std.mem.Allocator, result: *Result, module: []align(4) const u8) !void {
     var iterator = Iterator.initFromSlice(module);
-
-    var result = Result{
-        .entry_point = "",
-        .source_language = undefined,
-        .execution_model = undefined,
-        .addressing_mode = undefined,
-        .memory_model = undefined,
-        .execution_mode = undefined,
-    };
 
     const id_count = iterator.module[3];
 
