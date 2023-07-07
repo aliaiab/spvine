@@ -4,7 +4,7 @@ index: usize = 5,
 
 pub fn initFromSlice(slice: []align(4) const u8) Iterator {
     return .{
-        .module = @as([*]const spirv.WordInt, @ptrCast(@alignCast(slice.ptr)))[0 .. slice.len / 4],
+        .module = @as([*]const spirv.WordInt, @ptrCast(@alignCast(slice.ptr)))[0 .. slice.len / @sizeOf(spirv.WordInt)],
     };
 }
 
@@ -28,7 +28,7 @@ pub fn next(self: *Iterator) ?OpData {
 
     return .{
         .op = instruction_opcode,
-        .words = self.module[start_index..][0..instruction_word_count],
+        .words = self.module[start_index .. start_index + instruction_word_count],
     };
 }
 
