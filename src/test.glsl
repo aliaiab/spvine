@@ -18,6 +18,8 @@
 #define ENTRY ENTRYPOINT
 #define ENTRY_ALIAS ENTRY
 
+const x = 2;
+
 //adds two numbers, a and b
 float add(float a, float b) { //body
     float c = a + b;

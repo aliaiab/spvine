@@ -29,8 +29,10 @@ pub fn build(builder: *std.Build) void {
         .optimize = optimize,
     });
 
+    const run_tests = builder.addRunArtifact(exe_tests);
+
     const test_step = builder.step("test", "Run unit tests");
-    test_step.dependOn(&exe_tests.step);
+    test_step.dependOn(&run_tests.step);
 }
 
 const std = @import("std");
