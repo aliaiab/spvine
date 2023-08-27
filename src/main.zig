@@ -15,6 +15,32 @@ pub fn main() !void {
     std.debug.print("\n", .{});
 
     printErrors("src/test.glsl", ast);
+
+    const spirv_x86_test: []align(4) const u8 = @alignCast(@embedFile("x86_64_test.vert.spv"));
+
+    var air = try spirv.Air.fromSpirvBytes(allocator, spirv_x86_test);
+    defer air.deinit(allocator);
+
+    std.log.info("spirv air:\n", .{});
+
+    for (air.types, 0..) |@"type", index| {
+        std.log.info("{} type: {}\n", .{
+            index,
+            @"type",
+        });
+    }
+
+    for (air.functions, 0..) |function, function_index| {
+        std.log.info("{} function: {}..{}\n", .{
+            function_index,
+            function.start,
+            function.end,
+        });
+
+        for (air.instructions[function.start..function.end], 0..) |instruction, instruction_index| {
+            std.log.info("{}: {}", .{ instruction_index, instruction });
+        }
+    }
 }
 
 fn printErrors(file_path: []const u8, ast: Ast) void {

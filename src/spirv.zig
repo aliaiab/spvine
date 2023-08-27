@@ -1,3 +1,4 @@
+pub const Air = @import("spirv/Air.zig");
 pub const Iterator = @import("spirv/Iterator.zig");
 pub const reflect = @import("spirv/reflect.zig");
 
@@ -453,7 +454,7 @@ pub const FunctionControl = packed struct(u32) {
     Const: bool = false,
     _padding_0: u12 = 0,
     OptNoneINTEL: bool = false,
-    _padding_1: u21 = 0,
+    _padding_1: u15 = 0,
 };
 
 pub const MemorySemantics = packed struct(u32) {
@@ -1419,6 +1420,31 @@ pub const Op = enum(u32) {
     GroupLogicalXorKHR = 6408,
 };
 
+///Loads the word into the 32 bit value, correcting for endianness when necessary
+///value_endian is dynamic as some spirv binaries can have swapped endianness
+///Enums and packed structs defined in this struct are always specified in native endianness
+pub fn loadWord(
+    comptime T: type,
+    value_endian: std.builtin.Endian,
+    value: WordInt,
+) T {
+    const native_endianness = @import("builtin").cpu.arch.endian();
+
+    if (value_endian == native_endianness) {
+        return castWord(T, value);
+    }
+
+    return castWord(T, std.mem.readIntForeign(WordInt, std.mem.asBytes(&value)));
+}
+
+fn castWord(comptime T: type, value: WordInt) T {
+    return switch (@typeInfo(T)) {
+        .Struct => @bitCast(value),
+        .Enum => @enumFromInt(value),
+        else => comptime unreachable,
+    };
+}
+
 ///Convient representation of an operation
 ///This should be thought of as a "fat" IR for spirv
 ///Not all are ops supported yet
@@ -1453,3 +1479,5 @@ test {
     _ = MemorySemantics{};
     _ = RayFlags{};
 }
+
+const std = @import("std");
