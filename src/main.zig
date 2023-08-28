@@ -1,5 +1,6 @@
 pub const glsl = @import("glsl.zig");
 pub const spirv = @import("spirv.zig");
+pub const x86_64 = @import("x86_64.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -21,7 +22,15 @@ pub fn main() !void {
     var air = try spirv.Air.fromSpirvBytes(allocator, spirv_x86_test);
     defer air.deinit(allocator);
 
-    std.log.info("spirv air:\n", .{});
+    std.log.info("\n\nspirv air:", .{});
+
+    std.log.info("entry_point: {s}", .{@tagName(air.capability)});
+
+    std.log.info("capability: {s}", .{@tagName(air.capability)});
+    std.log.info("memory_model: {s}", .{@tagName(air.memory_model)});
+    std.log.info("addressing_mode: {s}", .{@tagName(air.addressing_mode)});
+
+    std.log.info("", .{});
 
     for (air.types, 0..) |@"type", index| {
         std.log.info("{} type: {}\n", .{
@@ -31,16 +40,45 @@ pub fn main() !void {
     }
 
     for (air.functions, 0..) |function, function_index| {
-        std.log.info("{} function: {}..{}\n", .{
+        std.log.info("{}: function: {}..{}\n", .{
             function_index,
-            function.start,
-            function.end,
+            function.start_block,
+            function.end_block,
         });
 
-        for (air.instructions[function.start..function.end], 0..) |instruction, instruction_index| {
-            std.log.info("{}: {}", .{ instruction_index, instruction });
+        for (air.blocks[function.start_block..function.end_block], 0..) |block, block_index| {
+            std.log.info("{}: block {}", .{ block_index, block });
+
+            for (air.instructions[block.start_instruction..block.end_instruction], 0..) |instruction, instruction_index| {
+                std.log.info("{}: {}", .{ instruction_index, instruction });
+            }
         }
     }
+
+    var x86_64_instructions: std.ArrayListUnmanaged(x86_64.Mir.Instruction) = .{};
+    defer x86_64_instructions.deinit(allocator);
+
+    try x86_64_instructions.appendSlice(allocator, &.{
+        .{ .tag = .mov, .operands = .{
+            .{ .register = .rax },
+            .{ .immediate = 69 },
+            .none,
+            .none,
+        } },
+        .{ .tag = .vmulss, .operands = .{
+            .{ .register = .xmm0 },
+            .{ .register = .xmm1 },
+            .{ .register = .xmm2 },
+            .none,
+        } },
+        .{ .tag = .ret },
+    });
+
+    // var mir: x86_64.Mir = .{ .instructions = x86_64_instructions.items };
+    var mir = try x86_64.Lower.lowerFromSpirvAir(allocator, air);
+    defer mir.deinit(allocator);
+
+    try x86_64.asm_renderer.print(mir, std.io.getStdOut().writer());
 }
 
 fn printErrors(file_path: []const u8, ast: Ast) void {
