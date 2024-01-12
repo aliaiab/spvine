@@ -40,7 +40,7 @@ pub fn lowerFromSpirvAir(
         }
     }
 
-    var mir: Mir = .{ .instructions = try mir_instructions.toOwnedSlice(allocator) };
+    const mir: Mir = .{ .instructions = try mir_instructions.toOwnedSlice(allocator) };
 
     return mir;
 }

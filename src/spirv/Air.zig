@@ -1,9 +1,10 @@
-//! The abstract intermediate representation for a spirv module
+//! Two-way abstract intermediate representation for a spirv module
 
 ///Should be an array?
 capability: spirv.Capability,
 addressing_mode: spirv.AddressingMode,
 memory_model: spirv.MemoryModel,
+///We only a support a single entry point, for now...
 entry_point: struct {
     execution_mode: spirv.ExecutionModel,
     name: []const u8,
@@ -18,6 +19,9 @@ types: []Type,
 pub fn fromSpirvBytes(allocator: std.mem.Allocator, bytes: []align(4) const u8) !Air {
     var iterator = spirv.Iterator.initFromSlice(bytes);
 
+    const id_count = iterator.module[3];
+    _ = id_count;
+
     var instructions: std.ArrayListUnmanaged(Instruction) = .{};
     defer instructions.deinit(allocator);
 
@@ -27,7 +31,7 @@ pub fn fromSpirvBytes(allocator: std.mem.Allocator, bytes: []align(4) const u8) 
     var functions: std.ArrayListUnmanaged(Function) = .{};
     defer functions.deinit(allocator);
 
-    var variables: std.ArrayListUnmanaged(Variable) = .{};
+    const variables: std.ArrayListUnmanaged(Variable) = .{};
     _ = variables;
 
     var types: std.ArrayListUnmanaged(Type) = .{};
@@ -36,10 +40,9 @@ pub fn fromSpirvBytes(allocator: std.mem.Allocator, bytes: []align(4) const u8) 
     var type_index_map: TypeIndexMap = .{};
     defer type_index_map.deinit(allocator);
 
-    var op_result_indices = try std.ArrayListUnmanaged(u32).initCapacity(allocator, iterator.module.len);
+    //map of ids to the first word of a spirv instruction
+    var op_result_indices: std.AutoArrayHashMapUnmanaged(u32, u32) = .{};
     defer op_result_indices.deinit(allocator);
-
-    try op_result_indices.appendNTimes(allocator, std.math.maxInt(u32), iterator.module.len);
 
     var air: Air = .{
         .capability = undefined,
@@ -56,7 +59,7 @@ pub fn fromSpirvBytes(allocator: std.mem.Allocator, bytes: []align(4) const u8) 
     var id_op_index: u32 = 5;
 
     while (iterator.next()) |op| {
-        defer id_op_index += 1;
+        defer id_op_index += @intCast(op.words.len);
 
         switch (op.op) {
             .EntryPoint => {
@@ -111,12 +114,15 @@ pub fn fromSpirvBytes(allocator: std.mem.Allocator, bytes: []align(4) const u8) 
 
         const has_result = result_index != 0;
 
-        if (op.words[result_index] >= op_result_indices.items.len) {
-            continue;
+        if (has_result) {
+            const result = try op_result_indices.getOrPut(allocator, op.words[result_index]);
+
+            result.value_ptr.* = id_op_index;
+
+            std.log.info("lol op = {}, res indx {}, res {}", .{ op.op, result_index, op.words[result_index] });
         }
 
-        std.log.info("lol op = {}, res indx {}", .{ op.op, result_index });
-        if (has_result) op_result_indices.items[op.words[result_index]] = id_op_index;
+        // if (has_result) op_result_indices.items[op.words[result_index]] = id_op_index;
     }
 
     iterator = spirv.Iterator.initFromSlice(bytes);
@@ -135,9 +141,13 @@ pub fn fromSpirvBytes(allocator: std.mem.Allocator, bytes: []align(4) const u8) 
                 //     bytes,
                 //     &types,
                 //     &type_index_map,
-                //     op_result_indices.items[op.words[2]],
+                //     op_result_indices.get(op.words[2]) orelse {
+                //         std.log.info("invalid result id = {}", .{op.words[2]});
+                //         std.log.info("words = {any}", .{op.words});
+
+                //         unreachable;
+                //     },
                 // );
-                // _ = return_type;
 
                 try functions.append(
                     allocator,
@@ -226,6 +236,7 @@ pub const InstructionIndex = u32;
 ///Stored as an 'instruction'
 pub const Instruction = struct {
     tag: Tag,
+    result: Register = .{},
 
     pub const Tag = enum {
         allocate_variable,
@@ -240,6 +251,11 @@ pub const Instruction = struct {
         matrix_vector_mul,
         matrix_matrix_mul,
         @"return",
+    };
+
+    ///An ssa virtual register
+    pub const Register = struct {
+        type: TypeIndex = undefined,
     };
 };
 
@@ -256,7 +272,9 @@ pub fn parseType(
 
     std.log.info("op_index = {}", .{op_index});
 
-    var iterator = spirv.Iterator.initFromSlice(@alignCast(bytes[(op_index) * 4 ..]));
+    var iterator = spirv.Iterator.initFromSlice(bytes);
+
+    iterator.index = op_index;
 
     const @"type": Type = if (iterator.next()) |op| switch (op.op) {
         .TypeVoid => .{ .primitive = .void },
