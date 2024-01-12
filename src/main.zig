@@ -55,25 +55,6 @@ pub fn main() !void {
         }
     }
 
-    var x86_64_instructions: std.ArrayListUnmanaged(x86_64.Mir.Instruction) = .{};
-    defer x86_64_instructions.deinit(allocator);
-
-    try x86_64_instructions.appendSlice(allocator, &.{
-        .{ .tag = .mov, .operands = .{
-            .{ .register = .rax },
-            .{ .immediate = 69 },
-            .none,
-            .none,
-        } },
-        .{ .tag = .vmulss, .operands = .{
-            .{ .register = .xmm0 },
-            .{ .register = .xmm1 },
-            .{ .register = .xmm2 },
-            .none,
-        } },
-        .{ .tag = .ret },
-    });
-
     // var mir: x86_64.Mir = .{ .instructions = x86_64_instructions.items };
     var mir = try x86_64.Lower.lowerFromSpirvAir(allocator, air);
     defer mir.deinit(allocator);
