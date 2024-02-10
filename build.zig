@@ -3,6 +3,10 @@ pub fn build(builder: *std.Build) void {
 
     const optimize = builder.standardOptimizeOption(.{});
 
+    _ = builder.addModule("spvine", .{
+        .root_source_file = .{ .path = "src/main.zig" },
+    });
+
     const exe = builder.addExecutable(.{
         .name = "spvine",
         .root_source_file = .{ .path = "src/main.zig" },

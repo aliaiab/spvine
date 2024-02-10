@@ -444,7 +444,7 @@ pub const LoopControl = packed struct(u32) {
     MaxInterleavingINTEL: bool = false,
     SpeculatedIterationsINTEL: bool = false,
     NoFusionINTEL: bool = false,
-    _padding_1: u9 = 0,
+    _padding_1: u7 = 0,
 };
 
 pub const FunctionControl = packed struct(u32) {
