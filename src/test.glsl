@@ -2,7 +2,9 @@
 #define ADD +
 #define FLOAT FOLLL
 
-#define TEST_FLAG 0
+#include <std>
+#include "hello, world"
+#define TEST_FLAG 1
 
 #if TEST_FLAG
 #define TEST_FLAG_2 1
@@ -13,27 +15,52 @@
 #error TEST_FLAG_2 is sus.
 #endif
 
+// #undef TEST_FLAG_2
+
 #define ENTRYPOINT main()
 
 #define ENTRY ENTRYPOINT
 #define ENTRY_ALIAS ENTRY
 
-const x = 2;
+#define FUNC(x, y) x + y
+
+#line 10 "sus.h"
+
+#define i32 int
+#define u32 uint
+#define f32 float
+
+const u32 x = 2;
+
+struct IInt64 {
+    i32 val;
+};
+
+struct IUInt64 {
+    IInt64 vali;
+    u32 valu;
+};
 
 //adds two numbers, a and b
-float add(float a, float b) { //body
-    float c = a + b;
+f32 add(f32 a, f32 b) { //body
+    f32 c = a + b;
     c += 1;
     c *= 2;
     c -= 1;
-    return c;
+
+    //FUNC(IDENTIFIER + 3, 10) => tok_stream_insertion: 10, +, 3, +, 10 
+
+    return f32(c);
 }
+
+#error What a bad day...
+#line 30 "hello.zig"
 
 /* 
     entrypoint procedure
 */
 void ENTRY {
-    float res = add(1, 2 + 1); //sus
+    f32 res = add(1, 2 + 1); //sus
 
     //clamp res to 1
     if (res > 1) {
@@ -43,7 +70,9 @@ void ENTRY {
         res += 2;
     }
 
-    int res_as_int = int(res); /* here is an cast to int */
+    #define BOOL_TRUE true
+
+    u32 res_as_int = u32(BOOL_TRUE); /* here is an cast to int */
 
     res_as_int *= 3;
     res_as_int = res_as_int * 10;

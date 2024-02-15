@@ -14,6 +14,7 @@ state: enum {
     single_comment,
     multi_comment,
     literal_number,
+    literal_string,
     directive_start,
 } = .start,
 is_directive: bool = false,
@@ -119,6 +120,9 @@ pub fn next(self: *Tokenizer) ?Token {
                 '*' => {
                     self.state = .asterisk;
                 },
+                '\"' => {
+                    self.state = .literal_string;
+                },
                 else => {},
             },
             .directive_start => switch (char) {
@@ -162,6 +166,17 @@ pub fn next(self: *Tokenizer) ?Token {
                     self.state = .start;
                     break;
                 },
+            },
+            .literal_string => switch (char) {
+                '\"' => {
+                    token.tag = .literal_string;
+                    self.state = .start;
+
+                    self.index += 1;
+
+                    break;
+                },
+                else => {},
             },
             .plus => switch (char) {
                 '=' => {
@@ -298,6 +313,7 @@ pub const Token = struct {
         directive_pragma,
         directive_extension,
         directive_version,
+        directive_include,
         directive_line,
         directive_end,
 
@@ -326,12 +342,12 @@ pub const Token = struct {
         keyword_float,
         keyword_double,
         keyword_bool,
-        keyword_true,
-        keyword_false,
-
         keyword_vec2,
         keyword_vec3,
         keyword_vec4,
+
+        keyword_true,
+        keyword_false,
 
         keyword_if,
         keyword_else,
@@ -350,6 +366,7 @@ pub const Token = struct {
         keyword_inout,
 
         literal_number,
+        literal_string,
         identifier,
         left_brace,
         right_brace,
@@ -376,6 +393,7 @@ pub const Token = struct {
                 .end,
                 .identifier,
                 .literal_number,
+                .literal_string,
                 .directive_end,
                 => null,
                 .directive_define => "#define",
@@ -390,6 +408,7 @@ pub const Token = struct {
                 .directive_pragma => "#pragma",
                 .directive_extension => "#extension",
                 .directive_version => "#version",
+                .directive_include => "#include",
                 .directive_line => "#line",
 
                 .keyword_layout => "layout",
@@ -538,6 +557,7 @@ pub const Token = struct {
         .{ "#pragma", .directive_pragma },
         .{ "#extension", .directive_pragma },
         .{ "#version", .directive_version },
+        .{ "#include", .directive_include },
         .{ "#line", .directive_line },
     });
 };

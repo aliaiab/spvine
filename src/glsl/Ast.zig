@@ -1,6 +1,7 @@
 //! The abstract syntax tree (AST) for glsl
 
 source: []const u8,
+defines: ExpandingTokenizer.DefineMap,
 tokens: TokenList.Slice,
 nodes: NodeList.Slice,
 extra_data: []const NodeIndex,
@@ -12,20 +13,20 @@ pub fn deinit(self: *Ast, allocator: std.mem.Allocator) void {
     defer self.nodes.deinit(allocator);
     defer allocator.free(self.errors);
     defer allocator.free(self.extra_data);
+    defer self.defines.deinit(allocator);
 }
 
 pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Ast {
     var token_list = TokenList{};
     defer token_list.deinit(allocator);
 
-    var preprocessor = Preprocessor.init(allocator, source);
-    defer preprocessor.deinit();
+    var tokenizer = ExpandingTokenizer.init(allocator, source);
 
     var errors: std.ArrayListUnmanaged(Error) = .{};
 
-    try preprocessor.tokenize(&token_list, &errors);
+    try tokenizer.tokenize(&token_list, &errors);
 
-    var defines = preprocessor.defines.iterator();
+    var defines = tokenizer.defines.iterator();
 
     while (defines.next()) |define| {
         std.log.info("define: {s} = .{s}", .{ define.key_ptr.*, @tagName(token_list.items(.tag)[define.value_ptr.start_token]) });
@@ -43,6 +44,7 @@ pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Ast {
         .nodes = parser.nodes.toOwnedSlice(),
         .extra_data = &.{},
         .errors = try parser.errors.toOwnedSlice(allocator),
+        .defines = tokenizer.defines,
     };
 }
 
@@ -91,6 +93,13 @@ pub fn tokenLocation(self: Ast, token_index: TokenIndex) SourceLocation {
     return loc;
 }
 
+pub fn tokenString(self: Ast, token_index: TokenIndex) []const u8 {
+    const token_start = self.tokens.items(.start)[token_index];
+    const token_end = self.tokens.items(.end)[token_index];
+
+    return self.source[token_start..token_end];
+}
+
 pub fn rootDecls(self: Ast) []const NodeIndex {
     const data = self.nodes.items(.data)[0];
 
@@ -108,6 +117,7 @@ pub const Error = struct {
     pub const Tag = enum(u8) {
         directive_error,
         expected_token,
+        unsupported_directive,
     };
 };
 
@@ -141,5 +151,5 @@ pub const Node = struct {
 const std = @import("std");
 const Ast = @This();
 const Token = @import("Tokenizer.zig").Token;
-const Preprocessor = @import("Preprocessor.zig");
+const ExpandingTokenizer = @import("ExpandingTokenizer.zig");
 const Parser = @import("Parser.zig");
