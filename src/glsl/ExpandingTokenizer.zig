@@ -1,14 +1,14 @@
-//! Implements the glsl preprocessor, which expands macros into larger token streams
+//! Implements the glsl preprocessor directives, which expands macros into larger token streams
 
 allocator: std.mem.Allocator,
 tokenizer: Tokenizer,
-defines: std.StringArrayHashMapUnmanaged(Define),
+defines: DefineMap,
 
 pub const Define = struct {
     start_token: u32,
 };
 
-pub fn init(allocator: std.mem.Allocator, source: []const u8) Preprocessor {
+pub fn init(allocator: std.mem.Allocator, source: []const u8) ExpandingTokenizer {
     return .{
         .allocator = allocator,
         .tokenizer = .{ .source = source, .index = 0 },
@@ -16,12 +16,17 @@ pub fn init(allocator: std.mem.Allocator, source: []const u8) Preprocessor {
     };
 }
 
-pub fn deinit(self: *Preprocessor) void {
+pub fn deinit(self: *ExpandingTokenizer) void {
     defer self.* = undefined;
     defer self.defines.deinit(self.allocator);
 }
 
-pub fn tokenize(self: *Preprocessor, tokens: *Ast.TokenList, errors: *std.ArrayListUnmanaged(Ast.Error)) !void {
+///TODO: remove the need to store tokens entirely, by calling the tokenizer during parsing
+pub fn tokenize(
+    self: *ExpandingTokenizer,
+    tokens: *Ast.TokenList,
+    errors: *std.ArrayListUnmanaged(Ast.Error),
+) !void {
     var if_condition: bool = true;
     var if_condition_level: u32 = 0;
 
@@ -29,7 +34,21 @@ pub fn tokenize(self: *Preprocessor, tokens: *Ast.TokenList, errors: *std.ArrayL
 
     while (self.tokenizer.next()) |token| {
         switch (token.tag) {
-            .directive_version => {},
+            .directive_version => {
+                if (!if_condition) continue;
+
+                const string = "__VERSION__";
+
+                const define = self.defines.getOrPut(self.allocator, string) catch unreachable;
+
+                try tokens.append(self.allocator, token);
+
+                const start_token = @as(u32, @intCast(tokens.len));
+
+                define.value_ptr.start_token = start_token;
+
+                try tokens.append(self.allocator, self.tokenizer.next() orelse break);
+            },
             .directive_if => {
                 current_if_level += 1;
 
@@ -94,6 +113,13 @@ pub fn tokenize(self: *Preprocessor, tokens: *Ast.TokenList, errors: *std.ArrayL
 
                 try tokens.append(self.allocator, self.tokenizer.next() orelse break);
             },
+            .directive_undef => {
+                if (!if_condition) continue;
+
+                const identifier_token = self.tokenizer.next() orelse break;
+
+                _ = self.defines.remove(self.tokenizer.source[identifier_token.start..identifier_token.end]);
+            },
             .directive_error => {
                 if (!if_condition) continue;
 
@@ -116,6 +142,14 @@ pub fn tokenize(self: *Preprocessor, tokens: *Ast.TokenList, errors: *std.ArrayL
                     try tokens.append(self.allocator, token);
                 }
             },
+            .directive_line, .directive_include => {
+                try errors.append(self.allocator, .{
+                    .tag = .unsupported_directive,
+                    .token = @intCast(tokens.len),
+                });
+
+                try tokens.append(self.allocator, token);
+            },
             else => {
                 if (!if_condition) continue;
 
@@ -125,7 +159,7 @@ pub fn tokenize(self: *Preprocessor, tokens: *Ast.TokenList, errors: *std.ArrayL
     }
 }
 
-fn tryExpandMacro(self: *Preprocessor, tokens: *std.MultiArrayList(Tokenizer.Token), identifier_token: Tokenizer.Token) !bool {
+fn tryExpandMacro(self: *ExpandingTokenizer, tokens: *std.MultiArrayList(Tokenizer.Token), identifier_token: Tokenizer.Token) !bool {
     const string = self.tokenizer.source[identifier_token.start..identifier_token.end];
 
     const define: Define = self.defines.get(string) orelse return false;
@@ -153,7 +187,9 @@ fn tryExpandMacro(self: *Preprocessor, tokens: *std.MultiArrayList(Tokenizer.Tok
     return true;
 }
 
+pub const DefineMap = std.StringHashMapUnmanaged(Define);
+
 const std = @import("std");
-const Preprocessor = @This();
+const ExpandingTokenizer = @This();
 const Tokenizer = @import("Tokenizer.zig");
 const Ast = @import("Ast.zig");
