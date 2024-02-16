@@ -2,9 +2,9 @@
 #define ADD +
 #define FLOAT FOLLL
 
-#include <std>
-#include "hello, world"
-#define TEST_FLAG 1
+// #include <std>
+// #include "hello, world"
+#define TEST_FLAG 0
 
 #if TEST_FLAG
 #define TEST_FLAG_2 1
@@ -24,41 +24,46 @@
 
 #define FUNC(x, y) x + y
 
-#line 10 "sus.h"
+//#line 10 "sus.h"
 
 #define i32 int
 #define u32 uint
 #define f32 float
 
-const u32 x = 2;
+// const u32 x = 2;
 
 struct IInt64 {
     i32 val;
+    // ;
 };
 
 struct IUInt64 {
-    IInt64 vali;
-    u32 valu;
+    // IInt64 vali;
+    // u32 valu;
 };
 
 //adds two numbers, a and b
 f32 add(f32 a, f32 b) { //body
     f32 c = a + b;
-    c += 1;
-    c *= 2;
-    c -= 1;
 
-    //FUNC(IDENTIFIER + 3, 10) => tok_stream_insertion: 10, +, 3, +, 10 
+    f32 e = c + b;
+    f32 d = e + b;
 
-    return f32(c);
+    return c + 3;
 }
 
-#error What a bad day...
-#line 30 "hello.zig"
+f32 sub(f32 x, f32 y, u32 z) {
+    f32 d = z;
+
+    return x + y;
+}
+
+#define COMPILE_ENTRY 0
 
 /* 
     entrypoint procedure
 */
+#if COMPILE_ENTRY
 void ENTRY {
     f32 res = add(1, 2 + 1); //sus
 
@@ -80,3 +85,4 @@ void ENTRY {
 
     gl_Position = vec4(0);
 }
+#endif
