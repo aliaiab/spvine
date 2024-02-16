@@ -8,16 +8,31 @@ pub fn main() !void {
 
     const allocator = gpa.allocator();
 
-    var ast = try Ast.parse(allocator, @embedFile("test.glsl"));
+    const test_glsl_path = "src/test.glsl";
+
+    const file = try std.fs.cwd().openFile(test_glsl_path, .{});
+    defer file.close();
+
+    const file_metadata = try file.metadata();
+
+    const test_glsl = try std.os.mmap(null, file_metadata.size(), std.os.PROT.READ, .{
+        .TYPE = .PRIVATE,
+    }, file.handle, 0);
+
+    var ast = try Ast.parse(allocator, test_glsl);
     defer ast.deinit(allocator);
 
-    for (0..ast.tokens.len) |token_index| {
-        std.log.info("{}: token: {}", .{ token_index, ast.tokens.items(.tag)[token_index] });
+    if (false) {
+        for (0..ast.tokens.len) |token_index| {
+            std.log.info("{}: token: {}", .{ token_index, ast.tokens.items(.tag)[token_index] });
+        }
     }
 
-    printAst(ast, 0, 0);
-
-    std.debug.print("\n", .{});
+    if (ast.errors.len == 0) {
+        std.debug.print("\nglsl.Ast:\n", .{});
+        try printAst(ast, 0, 0, 0, 1);
+        std.debug.print("\n", .{});
+    }
 
     printErrors("src/test.glsl", ast);
 
@@ -71,7 +86,7 @@ pub fn main() !void {
 fn printErrors(file_path: []const u8, ast: Ast) void {
     for (ast.errors) |error_value| {
         const loc = ast.tokenLocation(error_value.token);
-        const found_token = ast.tokens.items(.tag)[error_value.token];
+        const found_token = ast.tokens.items(.tag)[error_value.token + 1];
 
         const stderr = std.io.getStdErr().writer();
 
@@ -313,20 +328,104 @@ fn printAstToken(
     }
 }
 
-fn printAst(ast: Ast, node: Ast.NodeIndex, depth: u32) void {
+fn printAst(
+    ast: Ast,
+    node: Ast.NodeIndex,
+    depth: u32,
+    sibling_index: usize,
+    sibling_count: usize,
+) !void {
     const node_tag = ast.nodes.items(.tag)[node];
+
+    if (node == 0 and depth != 0) {
+        return;
+    }
+
+    const stderr = std.io.getStdErr().writer();
+
+    for (0..depth) |_| {
+        try stderr.print("  ", .{});
+    }
+
+    const connecting_string = if (sibling_index == sibling_count - 1) "└" else "├";
+    const is_leaf = switch (node_tag) {
+        .type_expr => true,
+        .statement => true,
+        else => false,
+    };
+
+    try stderr.print("{s}", .{connecting_string});
+    try stderr.print("{s}", .{if (is_leaf) "──" else "─┬"});
 
     switch (node_tag) {
         .nil => return,
         .root => {
-            std.log.info("node: root", .{});
+            try stderr.print("root: \n", .{});
 
-            for (ast.extra_data[ast.nodes.items(.data)[node].left..ast.nodes.items(.data)[node].right]) |child| {
-                printAst(ast, child, depth + 1);
+            const root_nodes = ast.extra_data[ast.nodes.items(.data)[node].left..ast.nodes.items(.data)[node].right];
+
+            for (root_nodes, 0..) |child, child_index| {
+                try printAst(ast, child, depth + 1, child_index, root_nodes.len);
+            }
+        },
+        .procedure => {
+            try stderr.print("proc_decl:\n", .{});
+
+            const proc = ast.dataFromNode(node, .procedure);
+
+            try printAst(ast, proc.prototype, depth + 1, 0, 2);
+            try printAst(ast, proc.body, depth + 1, 1, 2);
+        },
+        .procedure_proto => {
+            try stderr.print("proc_prototype: ", .{});
+
+            const proto = ast.dataFromNode(node, .procedure_proto);
+
+            try stderr.print("{s}\n", .{ast.tokenString(proto.name)});
+
+            try printAst(ast, proto.return_type, depth + 1, 0, 2);
+            try printAst(ast, proto.param_list, depth + 1, 1, 2);
+        },
+        .type_expr => {
+            const type_expr = ast.dataFromNode(node, .type_expr);
+
+            try stderr.print("type_expr: {s}\n", .{ast.tokenString(type_expr.token)});
+        },
+        .param_expr => {
+            const node_data = ast.nodes.get(node);
+
+            const type_expr = node_data.data.left;
+            const param_identifier = node_data.data.right;
+            try stderr.print("param_expr: {s}\n", .{ast.tokenString(param_identifier)});
+
+            try printAst(ast, type_expr, depth + 1, 0, 1);
+        },
+        .param_list => {
+            const list = ast.dataFromNode(node, .param_list);
+
+            try stderr.print("param_list:\n", .{});
+
+            for (list.params, 0..) |param_expr, child_index| {
+                try printAst(
+                    ast,
+                    param_expr,
+                    depth + 1,
+                    child_index,
+                    list.params.len,
+                );
+            }
+        },
+        .procedure_body => {
+            const list = ast.dataFromNode(node, .procedure_body);
+
+            try stderr.print("proc_body:\n", .{});
+
+            for (list.statements, 0..) |statement, statement_index| {
+                try printAst(ast, statement, depth + 1, statement_index, list.statements.len);
             }
         },
         else => {
-            std.log.info("node: {s}", .{@tagName(node_tag)});
+            try stderr.print("node: .{s}:\n", .{@tagName(node_tag)});
         },
     }
 }

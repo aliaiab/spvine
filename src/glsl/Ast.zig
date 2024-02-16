@@ -21,28 +21,33 @@ pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Ast {
     defer token_list.deinit(allocator);
 
     var tokenizer = ExpandingTokenizer.init(allocator, source);
+    errdefer tokenizer.deinit();
 
     var errors: std.ArrayListUnmanaged(Error) = .{};
+    // errdefer errors.deinit(allocator);
 
     try tokenizer.tokenize(&token_list, &errors);
-
-    var defines = tokenizer.defines.iterator();
-
-    while (defines.next()) |define| {
-        std.log.info("define: {s} = .{s}", .{ define.key_ptr.*, @tagName(token_list.items(.tag)[define.value_ptr.start_token]) });
-    }
 
     var parser = Parser.init(allocator, source, token_list.slice());
     parser.errors = errors;
     defer parser.deinit();
 
-    try parser.parse();
+    parser.parse() catch |e| {
+        switch (e) {
+            error.ExpectedToken => {
+                std.log.info("Expected tok", .{});
+
+                // return e;
+            },
+            else => return e,
+        }
+    };
 
     return Ast{
         .source = source,
         .tokens = token_list.toOwnedSlice(),
         .nodes = parser.nodes.toOwnedSlice(),
-        .extra_data = &.{},
+        .extra_data = try parser.extra_data.toOwnedSlice(allocator),
         .errors = try parser.errors.toOwnedSlice(allocator),
         .defines = tokenizer.defines,
     };
@@ -137,16 +142,86 @@ pub const Node = struct {
         right: NodeIndex,
     };
 
-    pub const Tag = enum(u8) {
-        nil,
-        root,
-        proc_decl,
-        proc_prototype,
-        compound_statement,
-        type_expr,
-        param_expr,
+    pub const Tag = std.meta.Tag(ExtraData);
+
+    pub const ExtraData = union(enum) {
+        nil: void,
+        root: void,
+        type_expr: struct {
+            token: Ast.TokenIndex,
+        },
+        procedure: struct {
+            prototype: Ast.NodeIndex,
+            body: Ast.NodeIndex,
+        },
+        procedure_proto: struct {
+            return_type: Ast.NodeIndex,
+            name: Ast.TokenIndex,
+            param_list: Ast.NodeIndex,
+        },
+        param_list: struct {
+            params: []const Ast.NodeIndex,
+        },
+        param_expr: struct {
+            type_expr: Ast.NodeIndex,
+            name: Ast.TokenIndex,
+        },
+        procedure_body: struct {
+            // statement_list: NodeIndex,
+            statements: []const Ast.NodeIndex,
+        },
+        statement_list: struct {
+            statements: []const Ast.NodeIndex,
+        },
+        statement: struct {},
     };
 };
+
+pub fn dataFromNode(ast: Ast, node: NodeIndex, comptime tag: Node.Tag) std.meta.TagPayload(Node.ExtraData, tag) {
+    const left = ast.nodes.items(.data)[node].left;
+    const right = ast.nodes.items(.data)[node].right;
+
+    const T = std.meta.TagPayload(Node.ExtraData, tag);
+
+    var value: T = undefined;
+
+    inline for (std.meta.fields(T), 0..) |field, field_index| {
+        switch (field.type) {
+            u32 => {
+                switch (std.meta.fields(T).len) {
+                    0 => {},
+                    1 => {
+                        @field(value, field.name) = left;
+                    },
+                    2 => {
+                        if (field_index == 0) {
+                            @field(value, field.name) = left;
+                        } else {
+                            @field(value, field.name) = right;
+                        }
+                    },
+                    else => {
+                        const indices = ast.extra_data[left..right];
+
+                        @field(value, field.name) = indices[field_index];
+                    },
+                }
+            },
+            []const u32 => {
+                if (std.meta.fields(T).len > 1) {
+                    @compileError("Multiple slices not yet supported");
+                }
+
+                const indices = ast.extra_data[left..right];
+
+                @field(value, field.name) = indices;
+            },
+            else => @compileError("Type not supported"),
+        }
+    }
+
+    return value;
+}
 
 const std = @import("std");
 const Ast = @This();
