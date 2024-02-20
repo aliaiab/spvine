@@ -32,24 +32,59 @@
 
 // const u32 x = 2;
 
-struct IInt64 {
-    i32 val;
-    // ;
-};
+// struct IInt64 {
+//     i32 val;
+//     // ;
+// };
 
-struct IUInt64 {
-    // IInt64 vali;
-    // u32 valu;
-};
+// struct IUInt64 {
+//     // IInt64 vali;
+//     // u32 valu;
+// };
 
 //adds two numbers, a and b
-f32 add(f32 a, f32 b) { //body
-    f32 c = a + b;
+f32 add(f32 a, f32 x) { //body
+    //variable decl
+    f32 f;
+
+    //variable asign
+    f = 3;
+
+    //variable init
+    f32 c = a + b; f32 n = 3;
+
+    if (c) {
+        c = c + 3;
+
+        {
+            int scoped = 3;
+        
+            c = c + 10;
+            f = c + 10;
+        }
+    } else {
+        c = 10;
+        c = 2 + c;
+        f = c + 1;
+    }
+
+    if (true) c = 3;
+
+    // c = 3;
+    // c += 3;
+    // c -= 3;
+    // c *= 3;
 
     f32 e = c + b;
     f32 d = e + b;
 
     return c + 3;
+}
+
+void meme() {}
+
+void sus(f32 a) {
+    return a;
 }
 
 f32 sub(f32 x, f32 y, u32 z) {
@@ -58,7 +93,14 @@ f32 sub(f32 x, f32 y, u32 z) {
     return x + y;
 }
 
+//-DCOMPILE_ENTRY 1
+
 #define COMPILE_ENTRY 0
+#define OOPS 0
+
+#if OOPS
+#error "Oops"
+#endif 
 
 /* 
     entrypoint procedure

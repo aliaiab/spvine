@@ -353,6 +353,7 @@ pub const Type = union(enum) {
     primitive: TypePrimitive,
     @"struct": TypeStruct,
     array: TypeArray,
+    function: TypeFunction,
 };
 
 pub const TypePrimitive = enum {
@@ -385,6 +386,12 @@ pub const TypeStruct = struct {
 pub const TypeArray = struct {
     child_type: TypeIndex,
     len: u32,
+};
+
+pub const TypeFunction = struct {
+    return_type: TypeIndex,
+    parameter_type_start: TypeIndex,
+    parameter_type_end: TypeIndex,
 };
 
 const std = @import("std");

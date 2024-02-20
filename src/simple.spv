@@ -1,0 +1,25 @@
+; SPIR-V
+; Version: 1.0
+; Generator: Google Shaderc over Glslang; 11
+; Bound: 10
+; Schema: 0
+               OpCapability Shader
+          %1 = OpExtInstImport "GLSL.std.450"
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint Vertex %main "main"
+               OpSource GLSL 450
+               OpSourceExtension "GL_GOOGLE_cpp_style_line_directive"
+               OpSourceExtension "GL_GOOGLE_include_directive"
+               OpName %main "main"
+               OpName %a "a"
+       %void = OpTypeVoid
+          %3 = OpTypeFunction %void
+        %int = OpTypeInt 32 1
+%_ptr_Function_int = OpTypePointer Function %int
+      %int_0 = OpConstant %int 0
+       %main = OpFunction %void None %3
+          %5 = OpLabel
+          %a = OpVariable %_ptr_Function_int Function
+               OpStore %a %int_0
+               OpReturn
+               OpFunctionEnd

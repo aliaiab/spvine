@@ -64,6 +64,9 @@ pub fn parse(self: *Parser) !void {
     var root_nodes: std.ArrayListUnmanaged(Ast.NodeIndex) = .{};
     defer root_nodes.deinit(self.allocator);
 
+    _ = try self.expectToken(.directive_version);
+    _ = try self.expectToken(.literal_number);
+
     while (self.token_index < self.token_tags.len) {
         switch (state) {
             .start => switch (self.token_tags[self.token_index]) {
@@ -92,6 +95,7 @@ pub fn parse(self: *Parser) !void {
                 .keyword_float,
                 .keyword_int,
                 .keyword_uint,
+                .identifier,
                 => {
                     const proc = try self.parseProcedure();
 
@@ -207,7 +211,14 @@ pub fn parseProcedure(self: *Parser) !Ast.NodeIndex {
     errdefer self.unreserveNode(node_index);
 
     const proto = try self.parseProcedureProto();
-    const body = try self.parseProcedureBody();
+
+    var body: Ast.NodeIndex = 0;
+
+    if (self.peekTokenTag() == .left_brace) {
+        body = try self.parseProcedureBody();
+    } else {
+        _ = try self.expectToken(.semicolon);
+    }
 
     try self.nodeSetData(node_index, .procedure, .{
         .prototype = proto,
@@ -254,37 +265,113 @@ pub fn parseParam(self: *Parser) !Ast.NodeIndex {
     return node;
 }
 
-pub fn parseStatementList(self: *Parser) !void {
-    _ = self;
-}
-
 pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
     const node = try self.reserveNode(.statement);
     errdefer self.unreserveNode(node);
 
     switch (self.peekTokenTag().?) {
+        .left_brace => {
+            _ = self.nextToken();
+
+            var statements: std.ArrayListUnmanaged(Ast.NodeIndex) = .{};
+            defer statements.deinit(self.allocator);
+
+            while (self.peekTokenTag().? != .right_brace) {
+                const statement = try self.parseStatement();
+
+                if (statement == 0) continue;
+
+                try statements.append(self.allocator, statement);
+            }
+
+            _ = try self.expectToken(.right_brace);
+
+            try self.nodeSetData(node, .statement_list, .{
+                .statements = statements.items,
+            });
+        },
         .keyword_float,
         .keyword_uint,
         .keyword_int,
         .keyword_void,
         => {
-            _ = self.nextToken();
+            const type_expr = try self.parseTypeExpr();
 
-            _ = try self.expectToken(.identifier);
+            const variable_name = try self.expectToken(.identifier);
 
             if (self.eatToken(.equals) != null) {
-                _ = try self.parseExpression();
+                const expression = try self.parseExpression();
+
+                try self.nodeSetData(node, .statement_var_init, .{
+                    .type_expr = type_expr,
+                    .identifier = variable_name,
+                    .expression = expression,
+                });
+            } else {
+                try self.nodeSetData(node, .statement_var_init, .{
+                    .type_expr = type_expr,
+                    .identifier = variable_name,
+                    .expression = 0,
+                });
             }
+        },
+        .identifier => {
+            const variable_name = try self.expectToken(.identifier);
+
+            if (self.eatToken(.equals) != null) {
+                const expression = try self.parseExpression();
+                try self.nodeSetData(node, .statement_assign_equal, .{
+                    .identifier = variable_name,
+                    .expression = expression,
+                });
+            }
+        },
+        .keyword_if => {
+            _ = self.nextToken();
+
+            const cond_expr = try self.parseExpression();
+
+            const taken_statment = try self.parseStatement();
+
+            var not_taken_statment: Ast.NodeIndex = 0;
+
+            const else_keyword = self.eatToken(.keyword_else);
+
+            if (else_keyword) |_| {
+                not_taken_statment = try self.parseStatement();
+            }
+
+            try self.nodeSetData(node, .statement_if, .{
+                .condition_expression = cond_expr,
+                .taken_statement = taken_statment,
+                .not_taken_statement = not_taken_statment,
+            });
         },
         .keyword_return => {
             _ = self.nextToken();
 
-            _ = try self.parseExpression();
+            var expression: Ast.NodeIndex = 0;
+
+            if (self.peekTokenTag().? != .semicolon) {
+                expression = try self.parseExpression();
+            }
+
+            try self.nodeSetData(node, .statement_return, .{
+                .expression = expression,
+            });
         },
-        else => return error.ExpectedToken,
+        .semicolon => {
+            _ = self.nextToken();
+            return 0;
+        },
+        else => return self.unexpectedToken(),
     }
 
-    _ = try self.expectToken(.semicolon);
+    if (self.nodes.items(.tag)[node] != .statement_list and
+        self.nodes.items(.tag)[node] != .statement_if)
+    {
+        _ = try self.expectToken(.semicolon);
+    }
 
     return node;
 }
@@ -293,24 +380,30 @@ pub fn parseExpression(self: *Parser) anyerror!Ast.NodeIndex {
     switch (self.peekTokenTag().?) {
         .identifier,
         .literal_number,
+        .keyword_true,
+        .keyword_false,
         => {
             switch (self.token_tags[self.token_index + 1]) {
                 .plus => {
-                    _ = try self.parseBinaryExpression();
+                    const node = try self.parseBinaryExpression();
+
+                    return node;
                 },
                 else => {
-                    _ = try self.parseUnaryExpression();
+                    return try self.parseUnaryExpression();
                 },
             }
         },
         .left_paren => {
             _ = self.nextToken();
 
-            _ = try self.parseExpression();
+            const node = try self.parseExpression();
 
             _ = try self.expectToken(.right_paren);
+
+            return node;
         },
-        else => unreachable,
+        else => return self.unexpectedToken(),
     }
 
     return 0;
@@ -323,13 +416,24 @@ pub fn parseUnaryExpression(self: *Parser) anyerror!Ast.NodeIndex {
     const open_paren = self.eatToken(.left_paren);
 
     switch (self.peekTokenTag().?) {
-        .literal_number => {
-            _ = self.nextToken();
+        .literal_number,
+        .keyword_true,
+        .keyword_false,
+        => {
+            const literal = self.nextToken().?;
+
+            try self.nodeSetData(node, .expression_literal_number, .{
+                .token = literal,
+            });
         },
         .identifier => {
-            _ = self.nextToken();
+            const identifier = try self.expectToken(.identifier);
+
+            try self.nodeSetData(node, .expression_identifier, .{
+                .token = identifier,
+            });
         },
-        else => return error.ExpectedToken,
+        else => return self.unexpectedToken(),
     }
 
     if (open_paren != null) {
@@ -353,7 +457,11 @@ pub fn parseBinaryExpression(self: *Parser) anyerror!Ast.NodeIndex {
     }
 
     const rhs = try self.parseUnaryExpression();
-    _ = rhs; // autofix
+
+    try self.nodeSetData(node, .expression_binary_add, .{
+        .left = lhs,
+        .right = rhs,
+    });
 
     return node;
 }
@@ -383,7 +491,7 @@ pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
                 },
             });
         },
-        else => {},
+        else => return self.unexpectedToken(),
     }
 
     return 0;
@@ -424,7 +532,6 @@ pub fn unreserveNode(self: *Parser, node: Ast.NodeIndex) void {
     const context = self.node_context_stack.pop();
 
     self.token_index = context.saved_token_index;
-    // self.errors.items.len = context.saved_error_index;
 }
 
 pub fn tokenIndexString(self: Parser, token_index: u32) []const u8 {
@@ -442,13 +549,22 @@ pub fn tokenString(self: Parser, token: Token) []const u8 {
 pub fn expectToken(self: *Parser, tag: Token.Tag) !u32 {
     errdefer self.errors.append(self.allocator, .{
         .tag = .expected_token,
-        .token = self.token_index - 1,
+        .token = self.token_index,
         .data = .{
             .expected_token = tag,
         },
     }) catch unreachable;
 
     return self.eatToken(tag) orelse error.ExpectedToken;
+}
+
+pub fn unexpectedToken(self: *Parser) anyerror {
+    self.errors.append(self.allocator, .{
+        .tag = .unexpected_token,
+        .token = self.token_index,
+    }) catch unreachable;
+
+    return error.UnexpectedToken;
 }
 
 pub fn eatToken(self: *Parser, tag: Token.Tag) ?u32 {
@@ -487,6 +603,8 @@ pub fn nodeSetData(
     comptime Tag: std.meta.Tag(Ast.Node.ExtraData),
     value: std.meta.TagPayload(Ast.Node.ExtraData, Tag),
 ) !void {
+    self.nodes.items(.tag)[node] = Tag;
+
     const extra_data_start = self.extra_data.items.len;
 
     if (std.meta.fields(@TypeOf(value)).len <= 2) {

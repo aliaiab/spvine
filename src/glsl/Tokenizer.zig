@@ -1,7 +1,7 @@
 //! Implements the lexical analysis stage of the frontend
 
 source: []const u8,
-index: u32,
+index: u32 = 0,
 state: enum {
     start,
     identifier,
@@ -16,11 +16,18 @@ state: enum {
     literal_number,
     literal_string,
     directive_start,
+    directive_middle,
 } = .start,
 is_directive: bool = false,
 
 pub fn next(self: *Tokenizer) ?Token {
-    var token = Token{ .start = self.index, .end = self.index, .tag = .end };
+    if (self.index >= self.source.len) {
+        return null;
+    }
+
+    self.state = .start;
+
+    var token: Token = .{ .start = self.index, .end = self.index, .tag = .nil };
 
     var multi_comment_level: usize = 0;
 
@@ -29,7 +36,6 @@ pub fn next(self: *Tokenizer) ?Token {
 
         switch (self.state) {
             .start => switch (char) {
-                0 => return null,
                 ' ',
                 '\t',
                 => {
@@ -123,13 +129,22 @@ pub fn next(self: *Tokenizer) ?Token {
                 '\"' => {
                     self.state = .literal_string;
                 },
-                else => {},
+                0 => return null,
+                else => return null,
             },
             .directive_start => switch (char) {
-                'a'...'z',
-                'A'...'Z',
-                '_',
-                => {},
+                ' ' => {},
+                else => {
+                    self.state = .directive_middle;
+                    self.is_directive = true;
+
+                    token.start = self.index;
+
+                    self.index -= 1;
+                },
+            },
+            .directive_middle => switch (char) {
+                'a'...'z', 'A'...'Z', '_' => {},
                 else => {
                     const string = self.source[token.start..self.index];
 
@@ -179,6 +194,12 @@ pub fn next(self: *Tokenizer) ?Token {
                 else => {},
             },
             .plus => switch (char) {
+                '+' => {
+                    token.tag = .plus_plus;
+                    self.state = .start;
+                    self.index += 1;
+                    break;
+                },
                 '=' => {
                     token.tag = .plus_equals;
                     self.state = .start;
@@ -192,6 +213,12 @@ pub fn next(self: *Tokenizer) ?Token {
                 },
             },
             .minus => switch (char) {
+                '-' => {
+                    token.tag = .minus_minus;
+                    self.state = .start;
+                    self.index += 1;
+                    break;
+                },
                 '=' => {
                     token.tag = .minus_equals;
                     self.state = .start;
@@ -285,9 +312,7 @@ pub fn next(self: *Tokenizer) ?Token {
         }
     }
 
-    if (token.tag == .end or self.index > self.source.len) {
-        return null;
-    }
+    if (token.tag == .nil) return null;
 
     token.end = self.index;
 
@@ -300,7 +325,7 @@ pub const Token = struct {
     tag: Tag,
 
     pub const Tag = enum(u8) {
-        end,
+        nil,
         directive_define,
         directive_undef,
         directive_if,
@@ -378,8 +403,10 @@ pub const Token = struct {
         comma,
         period,
         plus,
+        plus_plus,
         plus_equals,
         minus,
+        minus_minus,
         minus_equals,
         equals,
         equals_equals,
@@ -390,7 +417,7 @@ pub const Token = struct {
 
         pub fn lexeme(tag: Tag) ?[]const u8 {
             return switch (tag) {
-                .end,
+                .nil,
                 .identifier,
                 .literal_number,
                 .literal_string,
@@ -469,8 +496,10 @@ pub const Token = struct {
                 .comma => ",",
                 .period => ".",
                 .plus => "+",
+                .plus_plus => "++",
                 .plus_equals => "+=",
                 .minus => "-",
+                .minus_minus => "--",
                 .minus_equals => "-=",
                 .equals => "=",
                 .equals_equals => "==",
@@ -501,19 +530,15 @@ pub const Token = struct {
         .{ "writeonly", .keyword_writeonly },
         .{ "volatile", .keyword_volatile },
         .{ "coherent", .keyword_coherent },
-
         .{ "attribute", .keyword_attribute },
         .{ "varying", .keyword_varying },
         .{ "buffer", .keyword_buffer },
         .{ "uniform", .keyword_uniform },
         .{ "shared", .keyword_shared },
         .{ "const", .keyword_const },
-
         .{ "flat", .keyword_flat },
         .{ "smooth", .keyword_smooth },
-
         .{ "struct", .keyword_struct },
-
         .{ "void", .keyword_void },
         .{ "int", .keyword_int },
         .{ "uint", .keyword_uint },
@@ -522,11 +547,9 @@ pub const Token = struct {
         .{ "bool", .keyword_bool },
         .{ "true", .keyword_true },
         .{ "false", .keyword_false },
-
         .{ "vec2", .keyword_vec2 },
         .{ "vec3", .keyword_vec3 },
         .{ "vec4", .keyword_vec4 },
-
         .{ "if", .keyword_if },
         .{ "else", .keyword_else },
         .{ "break", .keyword_break },
@@ -545,20 +568,20 @@ pub const Token = struct {
     });
 
     const directives = std.ComptimeStringMap(Tag, .{
-        .{ "#define", .directive_define },
-        .{ "#undef", .directive_undef },
-        .{ "#if", .directive_if },
-        .{ "#ifdef", .directive_ifdef },
-        .{ "#ifndef", .directive_ifdef },
-        .{ "#else", .directive_else },
-        .{ "#elif", .directive_elif },
-        .{ "#endif", .directive_endif },
-        .{ "#error", .directive_error },
-        .{ "#pragma", .directive_pragma },
-        .{ "#extension", .directive_pragma },
-        .{ "#version", .directive_version },
-        .{ "#include", .directive_include },
-        .{ "#line", .directive_line },
+        .{ "define", .directive_define },
+        .{ "undef", .directive_undef },
+        .{ "if", .directive_if },
+        .{ "ifdef", .directive_ifdef },
+        .{ "ifndef", .directive_ifndef },
+        .{ "else", .directive_else },
+        .{ "elif", .directive_elif },
+        .{ "endif", .directive_endif },
+        .{ "error", .directive_error },
+        .{ "pragma", .directive_pragma },
+        .{ "extension", .directive_extension },
+        .{ "version", .directive_version },
+        .{ "include", .directive_include },
+        .{ "line", .directive_line },
     });
 };
 
@@ -575,7 +598,6 @@ test "Basic Vertex shader" {
 
     var tokenizer = Tokenizer{
         .source = source,
-        .index = 0,
     };
 
     try expect(tokenizer.next().?.tag == .directive_version);
