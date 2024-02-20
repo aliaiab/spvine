@@ -1,8 +1,8 @@
 //! Implements the glsl preprocessor directives, which expands macros into larger token streams
 
 allocator: std.mem.Allocator,
-tokenizer: Tokenizer,
 defines: DefineMap,
+tokenizer: Tokenizer,
 
 pub const Define = struct {
     start_token: u32,
@@ -11,14 +11,14 @@ pub const Define = struct {
 pub fn init(allocator: std.mem.Allocator, source: []const u8) ExpandingTokenizer {
     return .{
         .allocator = allocator,
-        .tokenizer = .{ .source = source, .index = 0 },
         .defines = .{},
+        .tokenizer = .{ .source = source },
     };
 }
 
 pub fn deinit(self: *ExpandingTokenizer) void {
-    defer self.* = undefined;
-    defer self.defines.deinit(self.allocator);
+    self.defines.deinit(self.allocator);
+    self.* = undefined;
 }
 
 ///TODO: remove the need to store tokens entirely, by calling the tokenizer during parsing
@@ -94,6 +94,7 @@ pub fn tokenize(
             .directive_endif => {
                 if_condition = true;
                 if_condition_level -= 1;
+                current_if_level -= 1;
             },
             .directive_define => {
                 if (!if_condition) continue;
@@ -168,6 +169,12 @@ fn tryExpandMacro(self: *ExpandingTokenizer, tokens: *std.MultiArrayList(Tokeniz
 
     while (token_index < tokens.len) {
         const token = tokens.get(token_index);
+
+        if (token.tag == .directive_end and token_index == define.start_token) {
+            try tokens.append(self.allocator, identifier_token);
+
+            return true;
+        }
 
         switch (token.tag) {
             .identifier => {

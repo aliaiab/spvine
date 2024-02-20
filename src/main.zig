@@ -3,12 +3,20 @@ pub const spirv = @import("spirv.zig");
 pub const x86_64 = @import("x86_64.zig");
 
 pub fn main() !void {
+    var test_glsl_path: []const u8 = "src/test.glsl";
+
+    {
+        var args = std.process.args();
+
+        _ = args.skip();
+
+        test_glsl_path = args.next() orelse test_glsl_path;
+    }
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer std.debug.assert(gpa.deinit() != .leak);
 
     const allocator = gpa.allocator();
-
-    const test_glsl_path = "src/test.glsl";
 
     const file = try std.fs.cwd().openFile(test_glsl_path, .{});
     defer file.close();
@@ -22,71 +30,54 @@ pub fn main() !void {
     var ast = try Ast.parse(allocator, test_glsl);
     defer ast.deinit(allocator);
 
-    if (false) {
-        for (0..ast.tokens.len) |token_index| {
-            std.log.info("{}: token: {}", .{ token_index, ast.tokens.items(.tag)[token_index] });
-        }
+    var defines = ast.defines.valueIterator();
+
+    while (defines.next()) |val| {
+        _ = val; // autofix
+        // std.log.info("def: tok_idx: {}, tok_tag: {}, str: {s}", .{ val.start_token, ast.tokens.items(.tag)[val.start_token], ast.tokenString(val.start_token) });
     }
 
-    if (ast.errors.len == 0) {
+    for (ast.tokens.items(.tag)) |token_tag| {
+        _ = token_tag; // autofix
+        // std.log.info("token_tag: {s}", .{@tagName(token_tag)});
+    }
+
+    if (ast.errors.len != 0) {
+        printErrors(test_glsl_path, ast);
+
+        return;
+    }
+
+    {
         std.debug.print("\nglsl.Ast:\n", .{});
         try printAst(ast, 0, 0, 0, 1);
         std.debug.print("\n", .{});
     }
 
-    printErrors("src/test.glsl", ast);
+    const spirv_air, const errors = try glsl.Sema.analyse(ast, allocator);
+    defer allocator.free(errors);
+    _ = spirv_air; // autofix
 
-    if (true) return;
-
-    const spirv_x86_test: []align(4) const u8 = @alignCast(@embedFile("x86_64_test.vert.spv"));
-
-    var air = try spirv.Air.fromSpirvBytes(allocator, spirv_x86_test);
-    defer air.deinit(allocator);
-
-    std.log.info("\n\nspirv air:", .{});
-
-    std.log.info("entry_point: {s}", .{@tagName(air.capability)});
-
-    std.log.info("capability: {s}", .{@tagName(air.capability)});
-    std.log.info("memory_model: {s}", .{@tagName(air.memory_model)});
-    std.log.info("addressing_mode: {s}", .{@tagName(air.addressing_mode)});
-
-    std.log.info("", .{});
-
-    for (air.types, 0..) |@"type", index| {
-        std.log.info("{} type: {}\n", .{
-            index,
-            @"type",
-        });
-    }
-
-    for (air.functions, 0..) |function, function_index| {
-        std.log.info("{}: function: {}..{}\n", .{
-            function_index,
-            function.start_block,
-            function.end_block,
-        });
-
-        for (air.blocks[function.start_block..function.end_block], 0..) |block, block_index| {
-            std.log.info("{}: block {}", .{ block_index, block });
-
-            for (air.instructions[block.start_instruction..block.end_instruction], 0..) |instruction, instruction_index| {
-                std.log.info("{}: {}", .{ instruction_index, instruction });
+    if (errors.len != 0) {
+        for (errors) |error_value| {
+            switch (error_value) {
+                .identifier_redefined => |identifier_redefined| {
+                    _ = identifier_redefined; // autofix
+                    std.log.err("Identifier Redefined!", .{});
+                },
             }
         }
+
+        return;
     }
-
-    // var mir: x86_64.Mir = .{ .instructions = x86_64_instructions.items };
-    // var mir = try x86_64.Lower.lowerFromSpirvAir(allocator, air);
-    // defer mir.deinit(allocator);
-
-    // try x86_64.asm_renderer.print(mir, std.io.getStdOut().writer());
 }
 
 fn printErrors(file_path: []const u8, ast: Ast) void {
     for (ast.errors) |error_value| {
-        const loc = ast.tokenLocation(error_value.token);
-        const found_token = ast.tokens.items(.tag)[error_value.token + 1];
+        const is_same_line = ast.tokenLocation(error_value.token -| 1).line == ast.tokenLocation(error_value.token).line;
+
+        const loc = if (is_same_line) ast.tokenLocation(error_value.token) else ast.tokenLocation(error_value.token - if (error_value.tag == .expected_token) @as(u32, 1) else @as(u32, 0));
+        const found_token = ast.tokens.items(.tag)[error_value.token];
 
         const stderr = std.io.getStdErr().writer();
 
@@ -107,7 +98,7 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
 
                 stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error{s}:" ++ terminal_bold ++ "{s}\n" ++ color_end, .{
                     file_path,
-                    loc.line + 1,
+                    loc.line,
                     loc.column,
                     terminal_red,
                     color_end,
@@ -117,7 +108,7 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
             .unsupported_directive => {
                 stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error{s}: " ++ terminal_bold ++ "unsupported directive '{s}'" ++ "\n" ++ color_end, .{
                     file_path,
-                    loc.line + 1,
+                    loc.line,
                     loc.column,
                     terminal_red,
                     color_end,
@@ -125,21 +116,42 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
                 }) catch {};
             },
             .expected_token => {
-                stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error{s}:" ++ terminal_bold ++ " expected '{s}', found '{s}'\n" ++ color_end, .{
+                if (is_same_line) {
+                    stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error{s}:" ++ terminal_bold ++ " expected '{s}', found '{s}'\n" ++ color_end, .{
+                        file_path,
+                        loc.line,
+                        loc.column,
+                        terminal_red,
+                        color_end,
+                        error_value.data.expected_token.lexeme() orelse @tagName(error_value.data.expected_token),
+                        found_token.lexeme() orelse @tagName(found_token),
+                    }) catch {};
+                } else {
+                    stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error{s}:" ++ terminal_bold ++ " expected '{s}'\n" ++ color_end, .{
+                        file_path,
+                        loc.line,
+                        loc.column,
+                        terminal_red,
+                        color_end,
+                        error_value.data.expected_token.lexeme() orelse @tagName(error_value.data.expected_token),
+                    }) catch {};
+                }
+            },
+            .unexpected_token => {
+                stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error{s}:" ++ terminal_bold ++ " unexpected '{s}'\n" ++ color_end, .{
                     file_path,
-                    loc.line + 1,
+                    loc.line,
                     loc.column,
                     terminal_red,
                     color_end,
-                    error_value.data.expected_token.lexeme() orelse @tagName(error_value.data.expected_token),
                     found_token.lexeme() orelse @tagName(found_token),
                 }) catch {};
             },
         }
 
-        const source_line = ast.source[loc.line_start..loc.line_end];
+        const source_line = ast.source[loc.line_start .. loc.line_end + 1];
 
-        var tokenizer = Tokenizer{ .source = source_line, .index = 0 };
+        var tokenizer: Tokenizer = .{ .source = ast.source[loc.line_start .. loc.line_end + 1] };
 
         var last_token: ?Tokenizer.Token = null;
 
@@ -148,6 +160,12 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
                 if (last_token.?.end != token.start) {
                     _ = stderr.write(source_line[last_token.?.end..token.start]) catch unreachable;
                 }
+            } else {
+                for (source_line[0..token.start]) |char| {
+                    if (char != ' ') continue;
+
+                    _ = stderr.writeByte(char) catch unreachable;
+                }
             }
 
             try printAstToken(stderr, ast, source_line, token);
@@ -155,17 +173,23 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
             last_token = token;
         }
 
-        if (last_token.?.end != source_line.len) {
+        if (last_token != null and last_token.?.end != source_line.len) {
             _ = stderr.write(terminal_green) catch unreachable;
             _ = stderr.write(source_line[last_token.?.end..]) catch unreachable;
             _ = stderr.write(color_end) catch unreachable;
         }
 
-        _ = stderr.write("\n") catch unreachable;
+        if (source_line[source_line.len - 1] != '\n') {
+            _ = stderr.write("\n") catch unreachable;
+        }
 
         stderr.print(terminal_green, .{}) catch {};
 
-        for (0..ast.tokens.items(.start)[error_value.token] - loc.line_start) |_| {
+        const cursor_length_raw = ast.tokens.items(.start)[error_value.token] - loc.line_start;
+
+        const cursor_length = @min(cursor_length_raw, loc.line_end - loc.line_start);
+
+        for (0..cursor_length) |_| {
             stderr.print("~", .{}) catch {};
         }
 
@@ -423,6 +447,46 @@ fn printAst(
             for (list.statements, 0..) |statement, statement_index| {
                 try printAst(ast, statement, depth + 1, statement_index, list.statements.len);
             }
+        },
+        .statement_list => {
+            const list = ast.dataFromNode(node, .statement_list);
+
+            try stderr.print("statement_list:\n", .{});
+
+            for (list.statements, 0..) |statement, statement_index| {
+                try printAst(ast, statement, depth + 1, statement_index, list.statements.len);
+            }
+        },
+        .statement_var_init => {
+            const var_init = ast.dataFromNode(node, .statement_var_init);
+
+            try stderr.print("statement_var_init: {s}\n", .{ast.tokenString(var_init.identifier)});
+
+            try printAst(ast, var_init.type_expr, depth + 1, 0, 2);
+            try printAst(ast, var_init.expression, depth + 1, 1, 2);
+        },
+        .statement_if => {
+            const if_statement = ast.dataFromNode(node, .statement_if);
+
+            try stderr.print("statement_if: \n", .{});
+
+            try printAst(ast, if_statement.condition_expression, depth + 1, 0, 3);
+            try printAst(ast, if_statement.taken_statement, depth + 1, 1, 3);
+            try printAst(ast, if_statement.not_taken_statement, depth + 1, 2, 3);
+        },
+        .statement_return => {
+            const return_statement = ast.dataFromNode(node, .statement_return);
+            try stderr.print("statement_return:\n", .{});
+
+            try printAst(ast, return_statement.expression, depth + 1, 0, 1);
+        },
+        .expression_binary_add => {
+            const binary_add = ast.dataFromNode(node, .expression_binary_add);
+
+            try stderr.print("expression_binary_add:\n", .{});
+
+            try printAst(ast, binary_add.left, depth + 1, 0, 2);
+            try printAst(ast, binary_add.right, depth + 1, 1, 2);
         },
         else => {
             try stderr.print("node: .{s}:\n", .{@tagName(node_tag)});

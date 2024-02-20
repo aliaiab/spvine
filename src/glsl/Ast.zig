@@ -34,11 +34,8 @@ pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Ast {
 
     parser.parse() catch |e| {
         switch (e) {
-            error.ExpectedToken => {
-                std.log.info("Expected tok", .{});
-
-                // return e;
-            },
+            error.ExpectedToken => {},
+            error.UnexpectedToken => {},
             else => return e,
         }
     };
@@ -70,8 +67,8 @@ pub const SourceLocation = struct {
 pub fn tokenLocation(self: Ast, token_index: TokenIndex) SourceLocation {
     var loc = SourceLocation{
         .source_name = "",
-        .line = 0,
-        .column = 0,
+        .line = 1,
+        .column = 1,
         .line_start = 0,
         .line_end = 0,
     };
@@ -88,7 +85,7 @@ pub fn tokenLocation(self: Ast, token_index: TokenIndex) SourceLocation {
         }
         if (c == '\n') {
             loc.line += 1;
-            loc.column = 0;
+            loc.column = 1;
             loc.line_start = @as(u32, @intCast(i)) + 1;
         } else {
             loc.column += 1;
@@ -122,6 +119,7 @@ pub const Error = struct {
     pub const Tag = enum(u8) {
         directive_error,
         expected_token,
+        unexpected_token,
         unsupported_directive,
     };
 };
@@ -148,32 +146,58 @@ pub const Node = struct {
         nil: void,
         root: void,
         type_expr: struct {
-            token: Ast.TokenIndex,
+            token: TokenIndex,
         },
         procedure: struct {
-            prototype: Ast.NodeIndex,
-            body: Ast.NodeIndex,
+            prototype: NodeIndex,
+            body: NodeIndex,
         },
         procedure_proto: struct {
-            return_type: Ast.NodeIndex,
-            name: Ast.TokenIndex,
-            param_list: Ast.NodeIndex,
+            return_type: NodeIndex,
+            name: TokenIndex,
+            param_list: NodeIndex,
         },
         param_list: struct {
-            params: []const Ast.NodeIndex,
+            params: []const NodeIndex,
         },
         param_expr: struct {
-            type_expr: Ast.NodeIndex,
-            name: Ast.TokenIndex,
+            type_expr: NodeIndex,
+            name: TokenIndex,
         },
         procedure_body: struct {
-            // statement_list: NodeIndex,
-            statements: []const Ast.NodeIndex,
+            statements: []const NodeIndex,
         },
         statement_list: struct {
-            statements: []const Ast.NodeIndex,
+            statements: []const NodeIndex,
         },
         statement: struct {},
+        statement_var_init: struct {
+            type_expr: NodeIndex,
+            identifier: TokenIndex,
+            expression: NodeIndex,
+        },
+        statement_assign_equal: struct {
+            identifier: TokenIndex,
+            expression: NodeIndex,
+        },
+        statement_if: struct {
+            condition_expression: NodeIndex,
+            taken_statement: NodeIndex,
+            not_taken_statement: NodeIndex,
+        },
+        statement_return: struct {
+            expression: NodeIndex,
+        },
+        expression_literal_number: struct {
+            token: TokenIndex,
+        },
+        expression_identifier: struct {
+            token: TokenIndex,
+        },
+        expression_binary_add: struct {
+            left: NodeIndex,
+            right: NodeIndex,
+        },
     };
 };
 
