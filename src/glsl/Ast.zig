@@ -4,7 +4,7 @@ source: []const u8,
 defines: ExpandingTokenizer.DefineMap,
 tokens: TokenList.Slice,
 nodes: NodeList.Slice,
-extra_data: []const NodeIndex,
+extra_data: []const u32,
 errors: []const Error,
 
 pub fn deinit(self: *Ast, allocator: std.mem.Allocator) void {
@@ -102,12 +102,6 @@ pub fn tokenString(self: Ast, token_index: TokenIndex) []const u8 {
     return self.source[token_start..token_end];
 }
 
-pub fn rootDecls(self: Ast) []const NodeIndex {
-    const data = self.nodes.items(.data)[0];
-
-    return self.extra_data[data.left..data.right];
-}
-
 pub const Error = struct {
     tag: Tag,
     token: Ast.TokenIndex,
@@ -127,25 +121,60 @@ pub const Error = struct {
 };
 
 pub const TokenIndex = u32;
-pub const NodeIndex = u32;
 
 pub const TokenList = std.MultiArrayList(Token);
 pub const NodeList = std.MultiArrayList(Node);
 
+pub const NodeIndex = packed struct(u32) {
+    tag: Node.Tag,
+    index: IndexInt,
+
+    pub const IndexInt = u24;
+
+    pub const nil: NodeIndex = .{
+        .tag = .nil,
+        .index = 0,
+    };
+
+    pub const root: NodeIndex = .{
+        .tag = .root,
+        .index = 0,
+    };
+};
+
 pub const Node = struct {
-    tag: Tag,
     data: Data,
 
     pub const Data = struct {
-        left: NodeIndex,
-        right: NodeIndex,
+        left: u32,
+        right: u32,
     };
 
-    pub const Tag = std.meta.Tag(ExtraData);
-
-    pub const ExtraData = union(enum) {
+    pub const Tag = enum(u8) {
         nil,
         root,
+        type_expr,
+        procedure,
+        procedure_proto,
+        param_list,
+        param_expr,
+        procedure_body,
+        statement_list,
+        statement,
+        statement_var_init,
+        statement_assign_equal,
+        statement_if,
+        statement_return,
+        expression_literal_number,
+        expression_identifier,
+        expression_binary_add,
+    };
+
+    pub const ExtraData = union(Tag) {
+        nil,
+        root: struct {
+            decls: []const NodeIndex,
+        },
         type_expr: struct {
             token: TokenIndex,
         },
@@ -203,8 +232,8 @@ pub const Node = struct {
 };
 
 pub fn dataFromNode(ast: Ast, node: NodeIndex, comptime tag: Node.Tag) std.meta.TagPayload(Node.ExtraData, tag) {
-    const left = ast.nodes.items(.data)[node].left;
-    const right = ast.nodes.items(.data)[node].right;
+    const left = ast.nodes.items(.data)[node.index].left;
+    const right = ast.nodes.items(.data)[node.index].right;
 
     const T = std.meta.TagPayload(Node.ExtraData, tag);
 
@@ -232,6 +261,26 @@ pub fn dataFromNode(ast: Ast, node: NodeIndex, comptime tag: Node.Tag) std.meta.
                     },
                 }
             },
+            NodeIndex => {
+                switch (std.meta.fields(T).len) {
+                    0 => {},
+                    1 => {
+                        @field(value, field.name) = @bitCast(left);
+                    },
+                    2 => {
+                        if (field_index == 0) {
+                            @field(value, field.name) = @bitCast(left);
+                        } else {
+                            @field(value, field.name) = @bitCast(right);
+                        }
+                    },
+                    else => {
+                        const indices = ast.extra_data[left..right];
+
+                        @field(value, field.name) = @bitCast(indices[field_index]);
+                    },
+                }
+            },
             []const u32 => {
                 if (std.meta.fields(T).len > 1) {
                     @compileError("Multiple slices not yet supported");
@@ -240,6 +289,15 @@ pub fn dataFromNode(ast: Ast, node: NodeIndex, comptime tag: Node.Tag) std.meta.
                 const indices = ast.extra_data[left..right];
 
                 @field(value, field.name) = indices;
+            },
+            []const NodeIndex => {
+                if (std.meta.fields(T).len > 1) {
+                    @compileError("Multiple slices not yet supported");
+                }
+
+                const indices = ast.extra_data[left..right];
+
+                @field(value, field.name) = @ptrCast(indices);
             },
             else => @compileError("Type not supported"),
         }

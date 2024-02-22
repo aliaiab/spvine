@@ -51,13 +51,10 @@ pub fn parse(self: *Parser) !void {
     } = .start;
 
     errdefer {
-        _ = self.setNode(0, .{
-            .tag = .root,
-            .data = .{
-                .left = 0,
-                .right = 0,
-            },
-        });
+        self.nodes.items(.data)[0] = .{
+            .left = @bitCast(Ast.NodeIndex.nil),
+            .right = @bitCast(Ast.NodeIndex.nil),
+        };
     }
 
     var root_nodes: std.ArrayListUnmanaged(Ast.NodeIndex) = .{};
@@ -117,15 +114,12 @@ pub fn parse(self: *Parser) !void {
     }
 
     const root_members_start = self.extra_data.items.len;
+    _ = root_members_start; // autofix
 
-    try self.extra_data.appendSlice(self.allocator, root_nodes.items);
+    var root_node: Ast.NodeIndex = .{ .tag = .root, .index = 0 };
 
-    _ = self.setNode(0, .{
-        .tag = .root,
-        .data = .{
-            .left = @as(u32, @intCast(root_members_start)),
-            .right = @as(u32, @intCast(self.extra_data.items.len)),
-        },
+    _ = try self.nodeSetData(&root_node, .root, .{
+        .decls = root_nodes.items,
     });
 }
 
@@ -158,7 +152,7 @@ pub fn parseStruct(self: *Parser) !Ast.NodeIndex {
 }
 
 pub fn parseProcedureProto(self: *Parser) !Ast.NodeIndex {
-    const node_index = try self.reserveNode(.procedure_proto);
+    var node_index = try self.reserveNode(.procedure_proto);
     errdefer self.unreserveNode(node_index);
 
     const type_expr = try self.parseTypeExpr();
@@ -171,7 +165,7 @@ pub fn parseProcedureProto(self: *Parser) !Ast.NodeIndex {
 
     _ = try self.expectToken(.right_paren);
 
-    try self.nodeSetData(node_index, .procedure_proto, .{
+    try self.nodeSetData(&node_index, .procedure_proto, .{
         .return_type = type_expr,
         .name = identifier,
         .param_list = param_list,
@@ -181,7 +175,7 @@ pub fn parseProcedureProto(self: *Parser) !Ast.NodeIndex {
 }
 
 pub fn parseProcedureBody(self: *Parser) !Ast.NodeIndex {
-    const node_index = try self.reserveNode(.procedure_body);
+    var node_index = try self.reserveNode(.procedure_body);
     errdefer self.unreserveNode(node_index);
 
     _ = try self.expectToken(.left_brace);
@@ -197,7 +191,7 @@ pub fn parseProcedureBody(self: *Parser) !Ast.NodeIndex {
 
     _ = try self.expectToken(.right_brace);
 
-    try self.nodeSetData(node_index, .procedure_body, .{
+    try self.nodeSetData(&node_index, .procedure_body, .{
         .statements = statements.items,
     });
 
@@ -205,12 +199,12 @@ pub fn parseProcedureBody(self: *Parser) !Ast.NodeIndex {
 }
 
 pub fn parseProcedure(self: *Parser) !Ast.NodeIndex {
-    const node_index = try self.reserveNode(.procedure);
+    var node_index = try self.reserveNode(.procedure);
     errdefer self.unreserveNode(node_index);
 
     const proto = try self.parseProcedureProto();
 
-    var body: Ast.NodeIndex = 0;
+    var body = Ast.NodeIndex.nil;
 
     if (self.peekTokenTag() == .left_brace) {
         body = try self.parseProcedureBody();
@@ -218,7 +212,7 @@ pub fn parseProcedure(self: *Parser) !Ast.NodeIndex {
         _ = try self.expectToken(.semicolon);
     }
 
-    try self.nodeSetData(node_index, .procedure, .{
+    try self.nodeSetData(&node_index, .procedure, .{
         .prototype = proto,
         .body = body,
     });
@@ -227,7 +221,7 @@ pub fn parseProcedure(self: *Parser) !Ast.NodeIndex {
 }
 
 pub fn parseParamList(self: *Parser) !Ast.NodeIndex {
-    const node = try self.reserveNode(.param_list);
+    var node = try self.reserveNode(.param_list);
     errdefer self.unreserveNode(node);
 
     var param_nodes: std.ArrayListUnmanaged(Ast.NodeIndex) = .{};
@@ -241,7 +235,7 @@ pub fn parseParamList(self: *Parser) !Ast.NodeIndex {
         _ = self.eatToken(.comma);
     }
 
-    try self.nodeSetData(node, .param_list, .{
+    try self.nodeSetData(&node, .param_list, .{
         .params = param_nodes.items,
     });
 
@@ -249,13 +243,13 @@ pub fn parseParamList(self: *Parser) !Ast.NodeIndex {
 }
 
 pub fn parseParam(self: *Parser) !Ast.NodeIndex {
-    const node = try self.reserveNode(.param_expr);
+    var node = try self.reserveNode(.param_expr);
     errdefer self.unreserveNode(node);
 
     const type_expr = try self.parseTypeExpr();
     const param_identifier = try self.expectToken(.identifier);
 
-    try self.nodeSetData(node, .param_expr, .{
+    try self.nodeSetData(&node, .param_expr, .{
         .type_expr = type_expr,
         .name = param_identifier,
     });
@@ -264,7 +258,7 @@ pub fn parseParam(self: *Parser) !Ast.NodeIndex {
 }
 
 pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
-    const node = try self.reserveNode(.statement);
+    var node = try self.reserveNode(.statement);
     errdefer self.unreserveNode(node);
 
     switch (self.peekTokenTag().?) {
@@ -277,14 +271,14 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
             while (self.peekTokenTag().? != .right_brace) {
                 const statement = try self.parseStatement();
 
-                if (statement == 0) continue;
+                if (statement.tag == .nil) continue;
 
                 try statements.append(self.allocator, statement);
             }
 
             _ = try self.expectToken(.right_brace);
 
-            try self.nodeSetData(node, .statement_list, .{
+            try self.nodeSetData(&node, .statement_list, .{
                 .statements = statements.items,
             });
         },
@@ -300,16 +294,16 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
             if (self.eatToken(.equals) != null) {
                 const expression = try self.parseExpression();
 
-                try self.nodeSetData(node, .statement_var_init, .{
+                try self.nodeSetData(&node, .statement_var_init, .{
                     .type_expr = type_expr,
                     .identifier = variable_name,
                     .expression = expression,
                 });
             } else {
-                try self.nodeSetData(node, .statement_var_init, .{
+                try self.nodeSetData(&node, .statement_var_init, .{
                     .type_expr = type_expr,
                     .identifier = variable_name,
-                    .expression = 0,
+                    .expression = Ast.NodeIndex.nil,
                 });
             }
         },
@@ -318,7 +312,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
 
             if (self.eatToken(.equals) != null) {
                 const expression = try self.parseExpression();
-                try self.nodeSetData(node, .statement_assign_equal, .{
+                try self.nodeSetData(&node, .statement_assign_equal, .{
                     .identifier = variable_name,
                     .expression = expression,
                 });
@@ -331,7 +325,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
 
             const taken_statment = try self.parseStatement();
 
-            var not_taken_statment: Ast.NodeIndex = 0;
+            var not_taken_statment = Ast.NodeIndex.nil;
 
             const else_keyword = self.eatToken(.keyword_else);
 
@@ -339,7 +333,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
                 not_taken_statment = try self.parseStatement();
             }
 
-            try self.nodeSetData(node, .statement_if, .{
+            try self.nodeSetData(&node, .statement_if, .{
                 .condition_expression = cond_expr,
                 .taken_statement = taken_statment,
                 .not_taken_statement = not_taken_statment,
@@ -348,25 +342,25 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
         .keyword_return => {
             _ = self.nextToken();
 
-            var expression: Ast.NodeIndex = 0;
+            var expression: Ast.NodeIndex = Ast.NodeIndex.nil;
 
             if (self.peekTokenTag().? != .semicolon) {
                 expression = try self.parseExpression();
             }
 
-            try self.nodeSetData(node, .statement_return, .{
+            try self.nodeSetData(&node, .statement_return, .{
                 .expression = expression,
             });
         },
         .semicolon => {
             _ = self.nextToken();
-            return 0;
+            return Ast.NodeIndex.nil;
         },
         else => return self.unexpectedToken(),
     }
 
-    if (self.nodes.items(.tag)[node] != .statement_list and
-        self.nodes.items(.tag)[node] != .statement_if)
+    if (node.tag != .statement_list and
+        node.tag != .statement_if)
     {
         _ = try self.expectToken(.semicolon);
     }
@@ -408,7 +402,7 @@ pub fn parseExpression(self: *Parser) anyerror!Ast.NodeIndex {
 }
 
 pub fn parseUnaryExpression(self: *Parser) anyerror!Ast.NodeIndex {
-    const node = try self.reserveNode(.nil);
+    var node = try self.reserveNode(.nil);
     errdefer self.unreserveNode(node);
 
     const open_paren = self.eatToken(.left_paren);
@@ -420,14 +414,14 @@ pub fn parseUnaryExpression(self: *Parser) anyerror!Ast.NodeIndex {
         => {
             const literal = self.nextToken().?;
 
-            try self.nodeSetData(node, .expression_literal_number, .{
+            try self.nodeSetData(&node, .expression_literal_number, .{
                 .token = literal,
             });
         },
         .identifier => {
             const identifier = try self.expectToken(.identifier);
 
-            try self.nodeSetData(node, .expression_identifier, .{
+            try self.nodeSetData(&node, .expression_identifier, .{
                 .token = identifier,
             });
         },
@@ -442,7 +436,7 @@ pub fn parseUnaryExpression(self: *Parser) anyerror!Ast.NodeIndex {
 }
 
 pub fn parseBinaryExpression(self: *Parser) anyerror!Ast.NodeIndex {
-    const node = try self.reserveNode(.nil);
+    var node = try self.reserveNode(.nil);
     errdefer self.unreserveNode(node);
 
     const lhs = try self.parseUnaryExpression();
@@ -456,7 +450,7 @@ pub fn parseBinaryExpression(self: *Parser) anyerror!Ast.NodeIndex {
 
     const rhs = try self.parseUnaryExpression();
 
-    try self.nodeSetData(node, .expression_binary_add, .{
+    try self.nodeSetData(&node, .expression_binary_add, .{
         .left = lhs,
         .right = rhs,
     });
@@ -475,12 +469,12 @@ pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
         .keyword_vec3,
         .keyword_vec4,
         => {
-            const node = try self.reserveNode(.type_expr);
+            var node = try self.reserveNode(.type_expr);
             errdefer self.unreserveNode(node);
 
             defer self.token_index += 1;
 
-            try self.nodeSetData(node, .type_expr, .{ .token = self.token_index });
+            try self.nodeSetData(&node, .type_expr, .{ .token = self.token_index });
 
             return node;
         },
@@ -498,28 +492,23 @@ pub fn addNode(self: *Parser, allocator: std.mem.Allocator, tag: Ast.Node.Tag) !
     return @as(Ast.NodeIndex, @intCast(index));
 }
 
-pub fn setNode(p: *Parser, i: usize, elem: Ast.Node) Ast.NodeIndex {
-    p.nodes.set(i, elem);
-    return @as(Ast.NodeIndex, @intCast(i));
-}
-
 pub fn reserveNode(self: *Parser, tag: Ast.Node.Tag) !Ast.NodeIndex {
     try self.nodes.resize(self.allocator, self.nodes.len + 1);
-    self.nodes.items(.tag)[self.nodes.len - 1] = tag;
 
     try self.node_context_stack.append(self.allocator, .{
         .saved_token_index = self.token_index,
         .saved_error_index = @intCast(self.errors.items.len),
     });
 
-    return @as(Ast.NodeIndex, @intCast(self.nodes.len - 1));
+    return .{
+        .tag = tag,
+        .index = @as(Ast.NodeIndex.IndexInt, @intCast(self.nodes.len - 1)),
+    };
 }
 
 pub fn unreserveNode(self: *Parser, node: Ast.NodeIndex) void {
-    if (node == self.nodes.len) {
+    if (node.index == self.nodes.len) {
         self.nodes.resize(self.allocator, self.nodes.len - 1) catch unreachable;
-    } else {
-        self.nodes.items(.tag)[node] = .nil;
     }
 
     const context = self.node_context_stack.pop();
@@ -592,13 +581,13 @@ pub fn peekTokenTag(self: Parser) ?Token.Tag {
 
 pub fn nodeSetData(
     self: *Parser,
-    node: Ast.NodeIndex,
+    node: *Ast.NodeIndex,
     comptime Tag: std.meta.Tag(Ast.Node.ExtraData),
     value: std.meta.TagPayload(Ast.Node.ExtraData, Tag),
 ) !void {
-    self.nodes.items(.tag)[node] = Tag;
-
     const extra_data_start = self.extra_data.items.len;
+
+    node.tag = Tag;
 
     if (std.meta.fields(@TypeOf(value)).len <= 2) {
         inline for (std.meta.fields(@TypeOf(value)), 0..) |field, field_index| {
@@ -607,13 +596,29 @@ pub fn nodeSetData(
                     switch (std.meta.fields(@TypeOf(value)).len) {
                         0 => {},
                         1 => {
-                            self.nodes.items(.data)[node].left = @field(value, field.name);
+                            self.nodes.items(.data)[node.index].left = @field(value, field.name);
                         },
                         2 => {
                             if (field_index == 0) {
-                                self.nodes.items(.data)[node].left = @field(value, field.name);
+                                self.nodes.items(.data)[node.index].left = @field(value, field.name);
                             } else {
-                                self.nodes.items(.data)[node].right = @field(value, field.name);
+                                self.nodes.items(.data)[node.index].right = @field(value, field.name);
+                            }
+                        },
+                        else => @compileError("."),
+                    }
+                },
+                Ast.NodeIndex => {
+                    switch (std.meta.fields(@TypeOf(value)).len) {
+                        0 => {},
+                        1 => {
+                            self.nodes.items(.data)[node.index].left = @bitCast(@field(value, field.name));
+                        },
+                        2 => {
+                            if (field_index == 0) {
+                                self.nodes.items(.data)[node.index].left = @bitCast(@field(value, field.name));
+                            } else {
+                                self.nodes.items(.data)[node.index].right = @bitCast(@field(value, field.name));
                             }
                         },
                         else => @compileError("."),
@@ -635,6 +640,22 @@ pub fn nodeSetData(
                         .right = @intCast(extra_data_end),
                     };
                 },
+                []const Ast.NodeIndex => {
+                    if (std.meta.fields(@TypeOf(value)).len > 1) {
+                        @compileError("Multiple slices not yet supported");
+                    }
+
+                    const data_start = self.extra_data.items.len;
+
+                    try self.extra_data.appendSlice(self.allocator, @ptrCast(@field(value, field.name)));
+
+                    const extra_data_end = self.extra_data.items.len;
+
+                    self.nodes.items(.data)[node.index] = .{
+                        .left = @intCast(data_start),
+                        .right = @intCast(extra_data_end),
+                    };
+                },
                 else => @compileError("Type not supported"),
             }
         }
@@ -649,6 +670,9 @@ pub fn nodeSetData(
             u32 => {
                 try self.extra_data.append(self.allocator, @field(value, field.name));
             },
+            Ast.NodeIndex => {
+                try self.extra_data.append(self.allocator, @bitCast(@field(value, field.name)));
+            },
             []const u32 => @compileError("Not yet supported"),
             else => @compileError("Type not supported"),
         }
@@ -656,7 +680,7 @@ pub fn nodeSetData(
 
     const extra_data_end = self.extra_data.items.len;
 
-    self.nodes.items(.data)[node] = .{
+    self.nodes.items(.data)[node.index] = .{
         .left = @intCast(extra_data_start),
         .right = @intCast(extra_data_end),
     };
