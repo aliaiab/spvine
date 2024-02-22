@@ -1,7 +1,7 @@
 //! Implements the lexical analysis stage of the frontend
 
 source: []const u8,
-index: u32 = 0,
+index: u32,
 state: enum {
     start,
     identifier,
@@ -20,6 +20,16 @@ state: enum {
 } = .start,
 is_directive: bool = false,
 
+pub fn init(source: []const u8) Tokenizer {
+    // Skip the UTF-8 BOM if present
+    const start_index: u32 = if (std.mem.startsWith(u8, source, "\xEF\xBB\xBF")) 3 else 0;
+
+    return Tokenizer{
+        .source = source,
+        .index = start_index,
+    };
+}
+
 pub fn next(self: *Tokenizer) ?Token {
     if (self.index >= self.source.len) {
         return null;
@@ -27,12 +37,12 @@ pub fn next(self: *Tokenizer) ?Token {
 
     self.state = .start;
 
-    var token: Token = .{ .start = self.index, .end = self.index, .tag = .nil };
+    var token: Token = .{ .start = self.index, .end = self.index, .tag = .invalid };
 
     var multi_comment_level: usize = 0;
 
-    while (self.index < self.source.len) : (self.index += 1) {
-        const char = self.source[self.index];
+    while (self.index <= self.source.len) : (self.index += 1) {
+        const char: u8 = if (self.index < self.source.len) self.source[self.index] else 0;
 
         switch (self.state) {
             .start => switch (char) {
@@ -129,11 +139,18 @@ pub fn next(self: *Tokenizer) ?Token {
                 '\"' => {
                     self.state = .literal_string;
                 },
-                0 => return null,
-                else => return null,
+                else => {
+                    token.tag = .invalid;
+                    token.start = self.index;
+                    self.index += 1;
+                    break;
+                },
             },
             .directive_start => switch (char) {
                 ' ' => {},
+                '\n' => {
+                    self.state = .start;
+                },
                 else => {
                     self.state = .directive_middle;
                     self.is_directive = true;
@@ -165,6 +182,8 @@ pub fn next(self: *Tokenizer) ?Token {
 
                     if (Token.getKeyword(string)) |keyword_tag| {
                         token.tag = keyword_tag;
+                    } else if (Token.reserved_keywords.get(string)) |_| {
+                        token.tag = .reserved_keyword;
                     } else {
                         token.tag = .identifier;
                     }
@@ -280,7 +299,10 @@ pub fn next(self: *Tokenizer) ?Token {
                 '\n', '\r' => {
                     self.state = .start;
                 },
-                else => {},
+                else => {
+                    self.state = .start;
+                    break;
+                },
             },
             .single_comment => switch (char) {
                 '\n' => {
@@ -312,9 +334,13 @@ pub fn next(self: *Tokenizer) ?Token {
         }
     }
 
-    if (token.tag == .nil) return null;
+    if (token.tag == .invalid and token.start >= self.source.len) {
+        return null;
+    }
 
     token.end = self.index;
+
+    self.state = .start;
 
     return token;
 }
@@ -325,7 +351,9 @@ pub const Token = struct {
     tag: Tag,
 
     pub const Tag = enum(u8) {
-        nil,
+        invalid,
+        reserved_keyword,
+
         directive_define,
         directive_undef,
         directive_if,
@@ -417,11 +445,12 @@ pub const Token = struct {
 
         pub fn lexeme(tag: Tag) ?[]const u8 {
             return switch (tag) {
-                .nil,
+                .invalid,
                 .identifier,
                 .literal_number,
                 .literal_string,
                 .directive_end,
+                .reserved_keyword,
                 => null,
                 .directive_define => "#define",
                 .directive_undef => "#undef",
@@ -523,7 +552,7 @@ pub const Token = struct {
         return directives.get(string);
     }
 
-    const keywords = std.ComptimeStringMap(Tag, .{
+    pub const keywords = std.ComptimeStringMap(Tag, .{
         .{ "layout", .keyword_layout },
         .{ "restrict", .keyword_restrict },
         .{ "readonly", .keyword_readonly },
@@ -567,7 +596,7 @@ pub const Token = struct {
         .{ "inout", .keyword_inout },
     });
 
-    const directives = std.ComptimeStringMap(Tag, .{
+    pub const directives = std.ComptimeStringMap(Tag, .{
         .{ "define", .directive_define },
         .{ "undef", .directive_undef },
         .{ "if", .directive_if },
@@ -583,6 +612,47 @@ pub const Token = struct {
         .{ "include", .directive_include },
         .{ "line", .directive_line },
     });
+
+    pub const reserved_keywords = std.ComptimeStringMap(void, .{
+        .{"common"},
+        .{"partition"},
+        .{"active"},
+        .{"asm"},
+        .{"class"},
+        .{"union"},
+        .{"enum"},
+        .{"typedef"},
+        .{"template"},
+        .{"this"},
+        .{"resource"},
+        .{"goto"},
+        .{"inline"},
+        .{"noinline"},
+        .{"public"},
+        .{"static"},
+        .{"extern"},
+        .{"interface"},
+        .{"long"},
+        .{"short"},
+        .{"half"},
+        .{"fixed"},
+        .{"unsigned"},
+        .{"superp"},
+        .{"input"},
+        .{"output"},
+        .{"hvec2"},
+        .{"hvec3"},
+        .{"hvec4"},
+        .{"fvec2"},
+        .{"fvec3"},
+        .{"fvec4"},
+        .{"sampler3DRect"},
+        .{"filter"},
+        .{"sizeof"},
+        .{"cast"},
+        .{"namespace"},
+        .{"using"},
+    });
 };
 
 test "Basic Vertex shader" {
@@ -591,14 +661,13 @@ test "Basic Vertex shader" {
     const source =
         \\#version 450
         \\
+        \\//Comment
         \\void main() {
-        \\gl_Position = vec4(0.5, 0.5, 0.5, 1.0);
+        \\  gl_Position = vec4(0.5, 0.5, 0.5, 1.0);
         \\}
     ;
 
-    var tokenizer = Tokenizer{
-        .source = source,
-    };
+    var tokenizer = Tokenizer.init(source);
 
     try expect(tokenizer.next().?.tag == .directive_version);
     try expect(tokenizer.next().?.tag == .literal_number);
@@ -624,6 +693,31 @@ test "Basic Vertex shader" {
     try expect(tokenizer.next().?.tag == .semicolon);
     try expect(tokenizer.next().?.tag == .right_brace);
     try expect(tokenizer.next() == null);
+}
+
+test "Invalid UTF-8" {
+    var tokenizer = Tokenizer.init("//\x80");
+
+    try std.testing.expect(tokenizer.next().?.tag == .invalid);
+    try std.testing.expect(tokenizer.next() == null);
+}
+
+test "UTF-8 BOM is recognized and skipped" {
+    var tokenizer = Tokenizer.init("\xEF\xBB\xBFa;\n");
+
+    try std.testing.expect(tokenizer.next().?.tag == .identifier);
+    try std.testing.expect(tokenizer.next().?.tag == .semicolon);
+    try std.testing.expect(tokenizer.next() == null);
+}
+
+test "Reserved keyword" {
+    var tokenizer = Tokenizer.init("goto asm typedef template\n");
+
+    try std.testing.expect(tokenizer.next().?.tag == .reserved_keyword);
+    try std.testing.expect(tokenizer.next().?.tag == .reserved_keyword);
+    try std.testing.expect(tokenizer.next().?.tag == .reserved_keyword);
+    try std.testing.expect(tokenizer.next().?.tag == .reserved_keyword);
+    try std.testing.expect(tokenizer.next() == null);
 }
 
 const std = @import("std");
