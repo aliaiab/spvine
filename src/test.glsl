@@ -26,7 +26,7 @@
 
 //#line 10 "sus.h"
 
-#define i32 int
+// #define i32 int
 #define u32 uint
 #define f32 float
 
@@ -43,15 +43,15 @@
 // };
 
 //adds two numbers, a and b
-f32 add(f32 a, f32 x) { //body
+float add(float a, float x) { //body
     //variable decl
-    f32 f;
+    float f;
 
     //variable asign
     f = 3;
 
     //variable init
-    f32 c = a + b; f32 n = 3;
+    float c = a + b; float n = 3;
 
     if (c) {
         c = c + 3;
@@ -75,20 +75,20 @@ f32 add(f32 a, f32 x) { //body
     // c -= 3;
     // c *= 3;
 
-    f32 e = c + b;
-    f32 d = e + b;
+    float e = c + b;
+    float d = e + b;
 
     return c + 3;
 }
 
 void meme() {}
 
-void sus(f32 a) {
+void sus(float a) {
     return a;
 }
 
-f32 sub(f32 x, f32 y, u32 z) {
-    f32 d = z;
+float sub(float x, float y, u32 z) {
+    float d = z;
 
     return x + y;
 }
@@ -107,7 +107,7 @@ f32 sub(f32 x, f32 y, u32 z) {
 */
 #if COMPILE_ENTRY
 void ENTRY {
-    f32 res = add(1, 2 + 1); //sus
+    float res = add(1, 2 + 1); //sus
 
     //clamp res to 1
     if (res > 1) {

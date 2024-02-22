@@ -2,7 +2,7 @@
 
 allocator: std.mem.Allocator,
 scope_stack: std.ArrayListUnmanaged(struct {
-    identifiers: std.StringHashMapUnmanaged(struct {
+    identifiers: token_map.Map(struct {
         type_index: u32,
     }) = .{},
 }) = .{},
@@ -197,3 +197,4 @@ const std = @import("std");
 const Ast = @import("Ast.zig");
 const spirv = @import("../spirv.zig");
 const Sema = @This();
+const token_map = @import("token_map.zig");

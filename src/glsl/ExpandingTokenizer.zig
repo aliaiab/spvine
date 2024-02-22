@@ -210,9 +210,10 @@ fn tryExpandMacro(self: *ExpandingTokenizer, tokens: *std.MultiArrayList(Tokeniz
     return true;
 }
 
-pub const DefineMap = std.StringHashMapUnmanaged(Define);
+pub const DefineMap = token_map.Map(Define);
 
 const std = @import("std");
 const ExpandingTokenizer = @This();
 const Tokenizer = @import("Tokenizer.zig");
 const Ast = @import("Ast.zig");
+const token_map = @import("token_map.zig");
