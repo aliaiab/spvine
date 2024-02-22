@@ -12,7 +12,7 @@ pub fn init(allocator: std.mem.Allocator, source: []const u8) ExpandingTokenizer
     return .{
         .allocator = allocator,
         .defines = .{},
-        .tokenizer = .{ .source = source },
+        .tokenizer = Tokenizer.init(source),
     };
 }
 
@@ -34,6 +34,22 @@ pub fn tokenize(
 
     while (self.tokenizer.next()) |token| {
         switch (token.tag) {
+            .invalid => {
+                try errors.append(self.allocator, .{
+                    .tag = .invalid_token,
+                    .token = @as(u32, @intCast(tokens.len)),
+                });
+
+                try tokens.append(self.allocator, token);
+            },
+            .reserved_keyword => {
+                try errors.append(self.allocator, .{
+                    .tag = .reserved_keyword_token,
+                    .token = @as(u32, @intCast(tokens.len)),
+                });
+
+                try tokens.append(self.allocator, token);
+            },
             .directive_version => {
                 if (!if_condition) continue;
 

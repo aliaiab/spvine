@@ -57,7 +57,6 @@ pub fn parse(self: *Parser) !void {
                 .left = 0,
                 .right = 0,
             },
-            .main_token = 0,
         });
     }
 
@@ -127,7 +126,6 @@ pub fn parse(self: *Parser) !void {
             .left = @as(u32, @intCast(root_members_start)),
             .right = @as(u32, @intCast(self.extra_data.items.len)),
         },
-        .main_token = 0,
     });
 }
 
@@ -482,19 +480,14 @@ pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
 
             defer self.token_index += 1;
 
-            return self.setNode(node, .{
-                .tag = .type_expr,
-                .main_token = self.token_index,
-                .data = .{
-                    .left = self.token_index,
-                    .right = 0,
-                },
-            });
+            try self.nodeSetData(node, .type_expr, .{ .token = self.token_index });
+
+            return node;
         },
         else => return self.unexpectedToken(),
     }
 
-    return 0;
+    unreachable;
 }
 
 pub fn addNode(self: *Parser, allocator: std.mem.Allocator, tag: Ast.Node.Tag) !Ast.NodeIndex {

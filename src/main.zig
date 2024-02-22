@@ -37,9 +37,8 @@ pub fn main() !void {
         // std.log.info("def: tok_idx: {}, tok_tag: {}, str: {s}", .{ val.start_token, ast.tokens.items(.tag)[val.start_token], ast.tokenString(val.start_token) });
     }
 
-    for (ast.tokens.items(.tag)) |token_tag| {
-        _ = token_tag; // autofix
-        // std.log.info("token_tag: {s}", .{@tagName(token_tag)});
+    for (ast.tokens.items(.tag), 0..) |token_tag, token_index| {
+        std.log.info("token_tag: {s}, '{s}'", .{ @tagName(token_tag), ast.tokenString(@intCast(token_index)) });
     }
 
     if (ast.errors.len != 0) {
@@ -89,6 +88,26 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
         const color_end = "\x1B[0;39m";
 
         switch (error_value.tag) {
+            .invalid_token => {
+                stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error{s}:" ++ terminal_bold ++ " invalid token '{s}'\n" ++ color_end, .{
+                    file_path,
+                    loc.line,
+                    loc.column,
+                    terminal_red,
+                    color_end,
+                    ast.tokenString(error_value.token),
+                }) catch {};
+            },
+            .reserved_keyword_token => {
+                stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error{s}:" ++ terminal_bold ++ " reserved keyword '{s}'\n" ++ color_end, .{
+                    file_path,
+                    loc.line,
+                    loc.column,
+                    terminal_red,
+                    color_end,
+                    ast.tokenString(error_value.token),
+                }) catch {};
+            },
             .directive_error => {
                 const error_directive_end = ast.tokens.items(.end)[error_value.token];
 
@@ -151,7 +170,7 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
 
         const source_line = ast.source[loc.line_start .. loc.line_end + 1];
 
-        var tokenizer: Tokenizer = .{ .source = ast.source[loc.line_start .. loc.line_end + 1] };
+        var tokenizer = Tokenizer.init(ast.source[loc.line_start .. loc.line_end + 1]);
 
         var last_token: ?Tokenizer.Token = null;
 

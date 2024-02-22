@@ -117,10 +117,12 @@ pub const Error = struct {
     } = .{ .none = {} },
 
     pub const Tag = enum(u8) {
-        directive_error,
+        invalid_token,
+        reserved_keyword_token,
         expected_token,
         unexpected_token,
         unsupported_directive,
+        directive_error,
     };
 };
 
@@ -132,7 +134,6 @@ pub const NodeList = std.MultiArrayList(Node);
 
 pub const Node = struct {
     tag: Tag,
-    main_token: TokenIndex,
     data: Data,
 
     pub const Data = struct {
@@ -143,8 +144,8 @@ pub const Node = struct {
     pub const Tag = std.meta.Tag(ExtraData);
 
     pub const ExtraData = union(enum) {
-        nil: void,
-        root: void,
+        nil,
+        root,
         type_expr: struct {
             token: TokenIndex,
         },

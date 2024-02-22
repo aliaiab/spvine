@@ -1,4 +1,4 @@
-#version 450
+#version 460
 
 struct StrTest {
     int a;
@@ -17,8 +17,15 @@ i32 add(i32 a, i32 b);
 f32 add(f32 a, f32 b);
 void main();
 
-int add(int a, int b) {
+//x##y => >tok_chain_start x, y tok_chain_end
+
+// typedef int32 int;
+
+\
+
+int add(i\nt a, int b) {
     int x;
+
     return a + b;
 }
 
