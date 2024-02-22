@@ -49,7 +49,7 @@ pub fn main() !void {
 
     {
         std.debug.print("\nglsl.Ast:\n", .{});
-        try printAst(ast, 0, 0, 0, 1);
+        try printAst(ast, .{ .tag = .root, .index = 0 }, 0, 0, 1);
         std.debug.print("\n", .{});
     }
 
@@ -378,9 +378,9 @@ fn printAst(
     sibling_index: usize,
     sibling_count: usize,
 ) !void {
-    const node_tag = ast.nodes.items(.tag)[node];
+    const node_tag = node.tag;
 
-    if (node == 0 and depth != 0) {
+    if (node.index == 0 and depth != 0) {
         return;
     }
 
@@ -405,10 +405,10 @@ fn printAst(
         .root => {
             try stderr.print("root: \n", .{});
 
-            const root_nodes = ast.extra_data[ast.nodes.items(.data)[node].left..ast.nodes.items(.data)[node].right];
+            const root_nodes = ast.dataFromNode(node, .root);
 
-            for (root_nodes, 0..) |child, child_index| {
-                try printAst(ast, child, depth + 1, child_index, root_nodes.len);
+            for (root_nodes.decls, 0..) |child, child_index| {
+                try printAst(ast, child, depth + 1, child_index, root_nodes.decls.len);
             }
         },
         .procedure => {
@@ -435,10 +435,11 @@ fn printAst(
             try stderr.print("type_expr: {s}\n", .{ast.tokenString(type_expr.token)});
         },
         .param_expr => {
-            const node_data = ast.nodes.get(node);
+            const node_data = ast.dataFromNode(node, .param_expr);
 
-            const type_expr = node_data.data.left;
-            const param_identifier = node_data.data.right;
+            const type_expr = node_data.type_expr;
+            const param_identifier = node_data.name;
+
             try stderr.print("param_expr: {s}\n", .{ast.tokenString(param_identifier)});
 
             try printAst(ast, type_expr, depth + 1, 0, 1);
