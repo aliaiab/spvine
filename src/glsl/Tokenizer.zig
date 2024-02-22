@@ -5,6 +5,7 @@ index: u32,
 state: enum {
     start,
     identifier,
+    identifier_line_continuation,
     forward_slash,
     backward_slash,
     plus,
@@ -177,6 +178,9 @@ pub fn next(self: *Tokenizer) ?Token {
             },
             .identifier => switch (char) {
                 'a'...'z', 'A'...'Z', '_', '0'...'9' => {},
+                '\\' => {
+                    self.state = .identifier_line_continuation;
+                },
                 else => {
                     const string = self.source[token.start..self.index];
 
@@ -190,6 +194,15 @@ pub fn next(self: *Tokenizer) ?Token {
 
                     self.state = .start;
 
+                    break;
+                },
+            },
+            .identifier_line_continuation => switch (char) {
+                '\r', '\n' => {
+                    self.state = .identifier;
+                },
+                else => {
+                    token.tag = .invalid;
                     break;
                 },
             },
@@ -443,6 +456,7 @@ pub const Token = struct {
         forward_slash,
         forward_slash_equals,
 
+        //TODO: potentially should be removed as token strings can now have non-canonical strings (with line continuation)
         pub fn lexeme(tag: Tag) ?[]const u8 {
             return switch (tag) {
                 .invalid,
@@ -552,7 +566,7 @@ pub const Token = struct {
         return directives.get(string);
     }
 
-    pub const keywords = std.ComptimeStringMap(Tag, .{
+    pub const keywords = token_map.ComptimeCanonicalMap(Tag, .{
         .{ "layout", .keyword_layout },
         .{ "restrict", .keyword_restrict },
         .{ "readonly", .keyword_readonly },
@@ -596,7 +610,7 @@ pub const Token = struct {
         .{ "inout", .keyword_inout },
     });
 
-    pub const directives = std.ComptimeStringMap(Tag, .{
+    pub const directives = token_map.ComptimeCanonicalMap(Tag, .{
         .{ "define", .directive_define },
         .{ "undef", .directive_undef },
         .{ "if", .directive_if },
@@ -613,7 +627,7 @@ pub const Token = struct {
         .{ "line", .directive_line },
     });
 
-    pub const reserved_keywords = std.ComptimeStringMap(void, .{
+    pub const reserved_keywords = token_map.ComptimeCanonicalMap(void, .{
         .{"common"},
         .{"partition"},
         .{"active"},
@@ -722,3 +736,4 @@ test "Reserved keyword" {
 
 const std = @import("std");
 const Tokenizer = @This();
+const token_map = @import("token_map.zig");

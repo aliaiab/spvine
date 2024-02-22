@@ -253,7 +253,7 @@ fn printAstToken(
         .directive_end,
         => {
             writer.print(terminal_purple ++ "{s}" ++ color_end, .{
-                token.lexeme() orelse source_line[token.start..token.end],
+                source_line[token.start..token.end],
             }) catch {};
         },
         .keyword_layout,
@@ -287,7 +287,7 @@ fn printAstToken(
         .keyword_inout,
         => {
             writer.print(terminal_blue ++ "{s}" ++ color_end, .{
-                token.lexeme() orelse source_line[token.start..token.end],
+                source_line[token.start..token.end],
             }) catch {};
         },
         .keyword_return,
@@ -306,24 +306,24 @@ fn printAstToken(
         .right_paren,
         => {
             writer.print(terminal_purple ++ "{s}" ++ color_end, .{
-                token.lexeme() orelse source_line[token.start..token.end],
+                source_line[token.start..token.end],
             }) catch {};
         },
         .left_brace,
         .right_brace,
         => {
             writer.print(terminal_yellow ++ "{s}" ++ color_end, .{
-                token.lexeme() orelse source_line[token.start..token.end],
+                source_line[token.start..token.end],
             }) catch {};
         },
         .literal_number => {
             writer.print(terminal_green ++ "{s}" ++ color_end, .{
-                token.lexeme() orelse source_line[token.start..token.end],
+                source_line[token.start..token.end],
             }) catch {};
         },
         .literal_string => {
             writer.print(terminal_cyan ++ "{s}" ++ color_end, .{
-                token.lexeme() orelse source_line[token.start..token.end],
+                source_line[token.start..token.end],
             }) catch {};
         },
         .identifier => {
@@ -348,7 +348,7 @@ fn printAstToken(
                     .keyword_vec4,
                     => {
                         writer.print(terminal_blue ++ "{s}" ++ color_end, .{
-                            token.lexeme() orelse source_line[token.start..token.end],
+                            source_line[token.start..token.end],
                         }) catch {};
                     },
                     else => {
@@ -365,7 +365,7 @@ fn printAstToken(
         },
         else => {
             writer.print("{s}", .{
-                token.lexeme() orelse source_line[token.start..token.end],
+                source_line[token.start..token.end],
             }) catch {};
         },
     }

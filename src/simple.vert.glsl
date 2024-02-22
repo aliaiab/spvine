@@ -13,9 +13,13 @@ struct StrTest {
 #error Sus
 #endif
 
-i32 add(i32 a, i32 b);
+i32 a\
+d\
+d(i32 a, i32 b);
+
 f32 add(f32 a, f32 b);
-void main();
+vo\
+id main();
 
 //x##y => >tok_chain_start x, y tok_chain_end
 
@@ -23,13 +27,13 @@ void main();
 
 \
 
-int add(i\nt a, int b) {
+int add(int a, int b) {
     int x;
 
     return a + b;
 }
 
-float add(float a, float b) {
+f32 add(f32 a, f32 b) {
     return a + b;
 }
 
