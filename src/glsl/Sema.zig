@@ -57,7 +57,7 @@ pub const TypeIndex = u32;
 
 ///Analyse the root node of the ast
 pub fn analyse(ast: Ast, allocator: std.mem.Allocator) !struct { spirv.Air, []Error } {
-    const root_decls = ast.dataFromNode(Ast.NodeIndex.root, .root).decls;
+    const root_decls = ast.root_decls;
 
     var sema: Sema = .{
         .allocator = allocator,
@@ -120,6 +120,8 @@ pub fn analyseProcedure(
 
         try self.scopeDefine(ast.tokenString(param.name));
     }
+
+    if (procedure.body.isNil()) return;
 
     const body = ast.dataFromNode(procedure.body, .procedure_body);
 

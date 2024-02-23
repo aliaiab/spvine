@@ -3,17 +3,17 @@
 source: []const u8,
 defines: ExpandingTokenizer.DefineMap,
 tokens: TokenList.Slice,
-nodes: NodeList.Slice,
-extra_data: []const u32,
+node_heap: NodeHeap,
 errors: []const Error,
+root_decls: []const NodeIndex,
 
 pub fn deinit(self: *Ast, allocator: std.mem.Allocator) void {
     defer self.* = undefined;
     defer self.tokens.deinit(allocator);
-    defer self.nodes.deinit(allocator);
     defer allocator.free(self.errors);
-    defer allocator.free(self.extra_data);
     defer self.defines.deinit(allocator);
+    defer allocator.free(self.root_decls);
+    defer self.node_heap.deinit(allocator);
 }
 
 pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Ast {
@@ -43,10 +43,10 @@ pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Ast {
     return Ast{
         .source = source,
         .tokens = token_list.toOwnedSlice(),
-        .nodes = parser.nodes.toOwnedSlice(),
-        .extra_data = try parser.extra_data.toOwnedSlice(allocator),
         .errors = try parser.errors.toOwnedSlice(allocator),
         .defines = tokenizer.defines,
+        .root_decls = parser.root_decls,
+        .node_heap = parser.node_heap,
     };
 }
 
@@ -120,10 +120,9 @@ pub const Error = struct {
     };
 };
 
-pub const TokenIndex = u32;
-
 pub const TokenList = std.MultiArrayList(Token);
-pub const NodeList = std.MultiArrayList(Node);
+
+pub const TokenIndex = u32;
 
 pub const NodeIndex = packed struct(u32) {
     tag: Node.Tag,
@@ -132,27 +131,17 @@ pub const NodeIndex = packed struct(u32) {
     pub const IndexInt = u24;
 
     pub const nil: NodeIndex = .{
-        .tag = .nil,
+        .tag = undefined,
         .index = 0,
     };
 
-    pub const root: NodeIndex = .{
-        .tag = .root,
-        .index = 0,
-    };
+    pub fn isNil(self: NodeIndex) bool {
+        return self.index == 0;
+    }
 };
 
 pub const Node = struct {
-    data: Data,
-
-    pub const Data = struct {
-        left: u32,
-        right: u32,
-    };
-
     pub const Tag = enum(u8) {
-        nil,
-        root,
         type_expr,
         procedure,
         procedure_proto,
@@ -171,10 +160,6 @@ pub const Node = struct {
     };
 
     pub const ExtraData = union(Tag) {
-        nil,
-        root: struct {
-            decls: []const NodeIndex,
-        },
         type_expr: struct {
             token: TokenIndex,
         },
@@ -231,79 +216,168 @@ pub const Node = struct {
     };
 };
 
-pub fn dataFromNode(ast: Ast, node: NodeIndex, comptime tag: Node.Tag) std.meta.TagPayload(Node.ExtraData, tag) {
-    const left = ast.nodes.items(.data)[node.index].left;
-    const right = ast.nodes.items(.data)[node.index].right;
+pub const NodeHeap = struct {
+    chunks: std.SegmentedList(NodeChunk, 4) = .{},
+    allocated_size: u32 = 0,
 
-    const T = std.meta.TagPayload(Node.ExtraData, tag);
+    pub const NodeChunk = [1024 * 32]u8;
 
-    var value: T = undefined;
-
-    inline for (std.meta.fields(T), 0..) |field, field_index| {
-        switch (field.type) {
-            u32 => {
-                switch (std.meta.fields(T).len) {
-                    0 => {},
-                    1 => {
-                        @field(value, field.name) = left;
-                    },
-                    2 => {
-                        if (field_index == 0) {
-                            @field(value, field.name) = left;
-                        } else {
-                            @field(value, field.name) = right;
-                        }
-                    },
-                    else => {
-                        const indices = ast.extra_data[left..right];
-
-                        @field(value, field.name) = indices[field_index];
-                    },
-                }
-            },
-            NodeIndex => {
-                switch (std.meta.fields(T).len) {
-                    0 => {},
-                    1 => {
-                        @field(value, field.name) = @bitCast(left);
-                    },
-                    2 => {
-                        if (field_index == 0) {
-                            @field(value, field.name) = @bitCast(left);
-                        } else {
-                            @field(value, field.name) = @bitCast(right);
-                        }
-                    },
-                    else => {
-                        const indices = ast.extra_data[left..right];
-
-                        @field(value, field.name) = @bitCast(indices[field_index]);
-                    },
-                }
-            },
-            []const u32 => {
-                if (std.meta.fields(T).len > 1) {
-                    @compileError("Multiple slices not yet supported");
-                }
-
-                const indices = ast.extra_data[left..right];
-
-                @field(value, field.name) = indices;
-            },
-            []const NodeIndex => {
-                if (std.meta.fields(T).len > 1) {
-                    @compileError("Multiple slices not yet supported");
-                }
-
-                const indices = ast.extra_data[left..right];
-
-                @field(value, field.name) = @ptrCast(indices);
-            },
-            else => @compileError("Type not supported"),
-        }
+    pub fn deinit(self: *NodeHeap, allocator: std.mem.Allocator) void {
+        self.chunks.deinit(allocator);
     }
 
-    return value;
+    pub fn allocateNode(
+        self: *NodeHeap,
+        allocator: std.mem.Allocator,
+        comptime tag: Node.Tag,
+    ) !u24 {
+        const Payload = std.meta.TagPayload(Node.ExtraData, tag);
+
+        comptime std.debug.assert(@sizeOf(Payload) <= @sizeOf(NodeChunk));
+
+        self.allocated_size = std.mem.alignForward(u32, self.allocated_size, @alignOf(Payload));
+
+        const offset: u32 = self.allocated_size;
+
+        const new_allocated_size = self.allocated_size + @sizeOf(Payload);
+
+        const next_chunk_index = @divTrunc(new_allocated_size, @sizeOf(NodeChunk));
+
+        if (next_chunk_index == self.chunks.len) {
+            self.allocated_size = next_chunk_index * @sizeOf(NodeChunk);
+
+            try self.chunks.append(allocator, undefined);
+
+            std.log.info("New chunk", .{});
+
+            return try self.allocateNode(allocator, tag);
+        }
+
+        self.allocated_size = new_allocated_size;
+
+        return @truncate(offset);
+    }
+
+    pub fn allocate(
+        self: *NodeHeap,
+        allocator: std.mem.Allocator,
+        comptime T: type,
+        count: usize,
+    ) ![]T {
+        self.allocated_size = std.mem.alignForward(u32, self.allocated_size, @alignOf(T));
+
+        const offset: u32 = self.allocated_size;
+        const new_allocated_size = self.allocated_size + @sizeOf(T) * count;
+
+        const chunk_index = @divTrunc(new_allocated_size, @sizeOf(NodeChunk));
+        const chunk_offset = offset - chunk_index * @sizeOf(NodeChunk);
+
+        if (chunk_index >= self.chunks.len) {
+            for (self.chunks.len - chunk_index + 1) |_| {
+                try self.chunks.append(allocator, undefined);
+            }
+        }
+
+        const chunk: [*]u8 = self.chunks.uncheckedAt(chunk_index);
+
+        const bytes = (chunk + chunk_offset)[0 .. @sizeOf(T) * count];
+
+        return @alignCast(std.mem.bytesAsSlice(T, bytes));
+    }
+
+    pub fn allocateDupe(
+        self: *NodeHeap,
+        allocator: std.mem.Allocator,
+        comptime T: type,
+        slice: []const T,
+    ) ![]T {
+        const dest = try self.allocate(allocator, T, slice.len);
+
+        @memcpy(dest, slice);
+
+        return dest;
+    }
+
+    pub fn initializeNode(
+        self: *NodeHeap,
+        comptime node_tag: Node.Tag,
+        node_payload: std.meta.TagPayload(Node.ExtraData, node_tag),
+        node_index: u24,
+    ) void {
+        self.getNodePtr(node_tag, node_index).* = node_payload;
+    }
+
+    pub fn getNodePtr(
+        self: *NodeHeap,
+        comptime node_tag: Node.Tag,
+        node_index: u24,
+    ) *std.meta.TagPayload(Node.ExtraData, node_tag) {
+        const Payload = std.meta.TagPayload(Node.ExtraData, node_tag);
+
+        const chunk_index = @divTrunc(node_index, @sizeOf(NodeChunk));
+        const chunk_offset = node_index - chunk_index *% @sizeOf(NodeChunk);
+
+        const chunk: [*]u8 = self.chunks.uncheckedAt(chunk_index);
+
+        const bytes = (chunk + chunk_offset)[0..@sizeOf(Payload)];
+
+        return @alignCast(std.mem.bytesAsValue(Payload, bytes));
+    }
+
+    pub fn getNodePtrConst(
+        self: NodeHeap,
+        comptime node_tag: Node.Tag,
+        node_index: u24,
+    ) *const std.meta.TagPayload(Node.ExtraData, node_tag) {
+        const Payload = std.meta.TagPayload(Node.ExtraData, node_tag);
+
+        const chunk_index = @divTrunc(node_index, @sizeOf(NodeChunk));
+        const chunk_offset = node_index - chunk_index * @sizeOf(NodeChunk);
+
+        const chunk: [*]const u8 = self.chunks.uncheckedAt(chunk_index);
+
+        const bytes = (chunk + chunk_offset)[0..@sizeOf(Payload)];
+
+        return @alignCast(std.mem.bytesAsValue(Payload, bytes));
+    }
+
+    pub fn freeNode(self: *NodeHeap, node: NodeIndex) void {
+        var payload_size: u32 = 0;
+
+        switch (node.tag) {
+            inline else => |tag| {
+                payload_size = @sizeOf(std.meta.TagPayload(Node.ExtraData, tag));
+            },
+        }
+
+        if (node.index == self.allocated_size - payload_size) {
+            self.allocated_size -= payload_size;
+        }
+    }
+};
+
+pub fn dataFromNode(ast: Ast, node: NodeIndex, comptime tag: Node.Tag) std.meta.TagPayload(Node.ExtraData, tag) {
+    return ast.node_heap.getNodePtrConst(tag, node.index).*;
+}
+
+test "Node Heap" {
+    var node_heap: NodeHeap = .{};
+
+    const node_index = try node_heap.allocateNode(std.testing.allocator, .expression_binary_add);
+
+    node_heap.getNodePtr(.expression_binary_add, node_index).* = .{
+        .left = Ast.NodeIndex.nil,
+        .right = Ast.NodeIndex.nil,
+    };
+
+    try std.testing.expect(node_heap.getNodePtrConst(.expression_binary_add, node_index).left.index == 0);
+    try std.testing.expect(node_heap.getNodePtrConst(.expression_binary_add, node_index).right.index == 0);
+
+    const vals: [4]u32 = .{ 1, 2, 3, 4 };
+
+    const vals_duped = try node_heap.allocateDupe(std.testing.allocator, u32, &vals);
+
+    try std.testing.expect(std.mem.eql(u32, vals_duped, &vals));
 }
 
 const std = @import("std");

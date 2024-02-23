@@ -6,13 +6,13 @@ token_tags: []const Token.Tag,
 token_starts: []const u32,
 token_ends: []const u32,
 token_index: u32,
-nodes: Ast.NodeList,
 node_context_stack: std.ArrayListUnmanaged(struct {
     saved_token_index: u32,
     saved_error_index: u32,
 }),
 errors: std.ArrayListUnmanaged(Ast.Error),
-extra_data: std.ArrayListUnmanaged(u32),
+node_heap: Ast.NodeHeap = .{},
+root_decls: []Ast.NodeIndex,
 
 pub fn init(
     allocator: std.mem.Allocator,
@@ -27,35 +27,24 @@ pub fn init(
         .token_ends = tokens.items(.end),
         .token_index = 0,
         .node_context_stack = .{},
-        .nodes = .{},
         .errors = .{},
-        .extra_data = .{},
+        .root_decls = &.{},
     };
 }
 
 pub fn deinit(self: *Parser) void {
     defer self.* = undefined;
-    defer self.nodes.deinit(self.allocator);
     defer self.errors.deinit(self.allocator);
     defer self.node_context_stack.deinit(self.allocator);
-    defer self.extra_data.deinit(self.allocator);
+    // defer self.node_heap.deinit(self.allocator);
 }
 
 ///Root parse node
 pub fn parse(self: *Parser) !void {
-    _ = try self.reserveNode(.root);
-
     var state: enum {
         start,
         directive,
     } = .start;
-
-    errdefer {
-        self.nodes.items(.data)[0] = .{
-            .left = @bitCast(Ast.NodeIndex.nil),
-            .right = @bitCast(Ast.NodeIndex.nil),
-        };
-    }
 
     var root_nodes: std.ArrayListUnmanaged(Ast.NodeIndex) = .{};
     defer root_nodes.deinit(self.allocator);
@@ -113,14 +102,7 @@ pub fn parse(self: *Parser) !void {
         }
     }
 
-    const root_members_start = self.extra_data.items.len;
-    _ = root_members_start; // autofix
-
-    var root_node: Ast.NodeIndex = .{ .tag = .root, .index = 0 };
-
-    _ = try self.nodeSetData(&root_node, .root, .{
-        .decls = root_nodes.items,
-    });
+    self.root_decls = try root_nodes.toOwnedSlice(self.allocator);
 }
 
 pub fn parseStruct(self: *Parser) !Ast.NodeIndex {
@@ -181,7 +163,7 @@ pub fn parseProcedureBody(self: *Parser) !Ast.NodeIndex {
     _ = try self.expectToken(.left_brace);
 
     var statements: std.ArrayListUnmanaged(Ast.NodeIndex) = .{};
-    defer statements.deinit(self.allocator);
+    // defer statements.deinit(self.allocator);
 
     while (self.peekTokenTag().? != .right_brace) {
         const statement = try self.parseStatement();
@@ -225,7 +207,7 @@ pub fn parseParamList(self: *Parser) !Ast.NodeIndex {
     errdefer self.unreserveNode(node);
 
     var param_nodes: std.ArrayListUnmanaged(Ast.NodeIndex) = .{};
-    defer param_nodes.deinit(self.allocator);
+    // defer param_nodes.deinit(self.allocator);
 
     while (self.peekTokenTag().? != .right_paren) {
         const param = try self.parseParam();
@@ -236,6 +218,7 @@ pub fn parseParamList(self: *Parser) !Ast.NodeIndex {
     }
 
     try self.nodeSetData(&node, .param_list, .{
+        // .params = try self.node_heap.allocateDupe(self.allocator, Ast.NodeIndex, param_nodes.items),
         .params = param_nodes.items,
     });
 
@@ -266,12 +249,12 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
             _ = self.nextToken();
 
             var statements: std.ArrayListUnmanaged(Ast.NodeIndex) = .{};
-            defer statements.deinit(self.allocator);
+            // defer statements.deinit(self.allocator);
 
             while (self.peekTokenTag().? != .right_brace) {
                 const statement = try self.parseStatement();
 
-                if (statement.tag == .nil) continue;
+                if (statement.isNil()) continue;
 
                 try statements.append(self.allocator, statement);
             }
@@ -279,6 +262,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
             _ = try self.expectToken(.right_brace);
 
             try self.nodeSetData(&node, .statement_list, .{
+                // .statements = try self.node_heap.allocateDupe(self.allocator, Ast.NodeIndex, statements.items),
                 .statements = statements.items,
             });
         },
@@ -402,7 +386,7 @@ pub fn parseExpression(self: *Parser) anyerror!Ast.NodeIndex {
 }
 
 pub fn parseUnaryExpression(self: *Parser) anyerror!Ast.NodeIndex {
-    var node = try self.reserveNode(.nil);
+    var node = try self.reserveNode(.expression_literal_number);
     errdefer self.unreserveNode(node);
 
     const open_paren = self.eatToken(.left_paren);
@@ -436,7 +420,7 @@ pub fn parseUnaryExpression(self: *Parser) anyerror!Ast.NodeIndex {
 }
 
 pub fn parseBinaryExpression(self: *Parser) anyerror!Ast.NodeIndex {
-    var node = try self.reserveNode(.nil);
+    var node = try self.reserveNode(.expression_binary_add);
     errdefer self.unreserveNode(node);
 
     const lhs = try self.parseUnaryExpression();
@@ -449,6 +433,10 @@ pub fn parseBinaryExpression(self: *Parser) anyerror!Ast.NodeIndex {
     }
 
     const rhs = try self.parseUnaryExpression();
+
+    std.log.info("node: {}", .{node});
+    std.log.info("lhs: {}", .{lhs});
+    std.log.info("rhs: {}", .{rhs});
 
     try self.nodeSetData(&node, .expression_binary_add, .{
         .left = lhs,
@@ -484,36 +472,37 @@ pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
     unreachable;
 }
 
-pub fn addNode(self: *Parser, allocator: std.mem.Allocator, tag: Ast.Node.Tag) !Ast.NodeIndex {
-    const index = try self.nodes.addOne(allocator);
-
-    self.nodes.items(.tag)[index] = tag;
-
-    return @as(Ast.NodeIndex, @intCast(index));
-}
-
-pub fn reserveNode(self: *Parser, tag: Ast.Node.Tag) !Ast.NodeIndex {
-    try self.nodes.resize(self.allocator, self.nodes.len + 1);
-
+pub fn reserveNode(self: *Parser, comptime tag: Ast.Node.Tag) !Ast.NodeIndex {
     try self.node_context_stack.append(self.allocator, .{
         .saved_token_index = self.token_index,
         .saved_error_index = @intCast(self.errors.items.len),
     });
 
+    const node_index = try self.node_heap.allocateNode(self.allocator, tag);
+
     return .{
         .tag = tag,
-        .index = @as(Ast.NodeIndex.IndexInt, @intCast(self.nodes.len - 1)),
+        .index = node_index,
     };
 }
 
 pub fn unreserveNode(self: *Parser, node: Ast.NodeIndex) void {
-    if (node.index == self.nodes.len) {
-        self.nodes.resize(self.allocator, self.nodes.len - 1) catch unreachable;
-    }
+    self.node_heap.freeNode(node);
 
     const context = self.node_context_stack.pop();
 
     self.token_index = context.saved_token_index;
+}
+
+pub fn nodeSetData(
+    self: *Parser,
+    node: *Ast.NodeIndex,
+    comptime Tag: std.meta.Tag(Ast.Node.ExtraData),
+    value: std.meta.TagPayload(Ast.Node.ExtraData, Tag),
+) !void {
+    node.tag = Tag;
+
+    self.node_heap.getNodePtr(Tag, node.index).* = value;
 }
 
 pub fn tokenIndexString(self: Parser, token_index: u32) []const u8 {
@@ -577,113 +566,6 @@ pub fn peekToken(self: Parser) ?u32 {
 
 pub fn peekTokenTag(self: Parser) ?Token.Tag {
     return self.token_tags[self.peekToken() orelse return null];
-}
-
-pub fn nodeSetData(
-    self: *Parser,
-    node: *Ast.NodeIndex,
-    comptime Tag: std.meta.Tag(Ast.Node.ExtraData),
-    value: std.meta.TagPayload(Ast.Node.ExtraData, Tag),
-) !void {
-    const extra_data_start = self.extra_data.items.len;
-
-    node.tag = Tag;
-
-    if (std.meta.fields(@TypeOf(value)).len <= 2) {
-        inline for (std.meta.fields(@TypeOf(value)), 0..) |field, field_index| {
-            switch (field.type) {
-                u32 => {
-                    switch (std.meta.fields(@TypeOf(value)).len) {
-                        0 => {},
-                        1 => {
-                            self.nodes.items(.data)[node.index].left = @field(value, field.name);
-                        },
-                        2 => {
-                            if (field_index == 0) {
-                                self.nodes.items(.data)[node.index].left = @field(value, field.name);
-                            } else {
-                                self.nodes.items(.data)[node.index].right = @field(value, field.name);
-                            }
-                        },
-                        else => @compileError("."),
-                    }
-                },
-                Ast.NodeIndex => {
-                    switch (std.meta.fields(@TypeOf(value)).len) {
-                        0 => {},
-                        1 => {
-                            self.nodes.items(.data)[node.index].left = @bitCast(@field(value, field.name));
-                        },
-                        2 => {
-                            if (field_index == 0) {
-                                self.nodes.items(.data)[node.index].left = @bitCast(@field(value, field.name));
-                            } else {
-                                self.nodes.items(.data)[node.index].right = @bitCast(@field(value, field.name));
-                            }
-                        },
-                        else => @compileError("."),
-                    }
-                },
-                []const u32 => {
-                    if (std.meta.fields(@TypeOf(value)).len > 1) {
-                        @compileError("Multiple slices not yet supported");
-                    }
-
-                    const data_start = self.extra_data.items.len;
-
-                    try self.extra_data.appendSlice(self.allocator, @field(value, field.name));
-
-                    const extra_data_end = self.extra_data.items.len;
-
-                    self.nodes.items(.data)[node] = .{
-                        .left = @intCast(data_start),
-                        .right = @intCast(extra_data_end),
-                    };
-                },
-                []const Ast.NodeIndex => {
-                    if (std.meta.fields(@TypeOf(value)).len > 1) {
-                        @compileError("Multiple slices not yet supported");
-                    }
-
-                    const data_start = self.extra_data.items.len;
-
-                    try self.extra_data.appendSlice(self.allocator, @ptrCast(@field(value, field.name)));
-
-                    const extra_data_end = self.extra_data.items.len;
-
-                    self.nodes.items(.data)[node.index] = .{
-                        .left = @intCast(data_start),
-                        .right = @intCast(extra_data_end),
-                    };
-                },
-                else => @compileError("Type not supported"),
-            }
-        }
-
-        return;
-    }
-
-    try self.extra_data.ensureTotalCapacity(self.allocator, self.extra_data.items.len + std.meta.fields(@TypeOf(value)).len);
-
-    inline for (std.meta.fields(@TypeOf(value))) |field| {
-        switch (field.type) {
-            u32 => {
-                try self.extra_data.append(self.allocator, @field(value, field.name));
-            },
-            Ast.NodeIndex => {
-                try self.extra_data.append(self.allocator, @bitCast(@field(value, field.name)));
-            },
-            []const u32 => @compileError("Not yet supported"),
-            else => @compileError("Type not supported"),
-        }
-    }
-
-    const extra_data_end = self.extra_data.items.len;
-
-    self.nodes.items(.data)[node.index] = .{
-        .left = @intCast(extra_data_start),
-        .right = @intCast(extra_data_end),
-    };
 }
 
 const std = @import("std");
