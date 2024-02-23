@@ -28,17 +28,17 @@ id main();
 \
 
 int add(int a, int b) {
-    int x;
+    // int x;
 
-    return a + b;
+    return 3;
 }
 
 f32 add(f32 a, f32 b) {
-    return a + b;
+    return a + 2;
 }
 
 void main() {
-    int a = 0;
+    // int a = 0;
 
     // int a = 0;
 

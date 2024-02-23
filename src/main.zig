@@ -49,7 +49,11 @@ pub fn main() !void {
 
     {
         std.debug.print("\nglsl.Ast:\n", .{});
-        try printAst(ast, .{ .tag = .root, .index = 0 }, 0, 0, 1);
+
+        for (ast.root_decls, 0..) |root_decl, decl_index| {
+            try printAst(ast, root_decl, 0, decl_index, ast.root_decls.len);
+        }
+
         std.debug.print("\n", .{});
     }
 
@@ -380,7 +384,7 @@ fn printAst(
 ) !void {
     const node_tag = node.tag;
 
-    if (node.index == 0 and depth != 0) {
+    if (node.isNil()) {
         return;
     }
 
@@ -401,16 +405,6 @@ fn printAst(
     try stderr.print("{s}", .{if (is_leaf) "──" else "─┬"});
 
     switch (node_tag) {
-        .nil => return,
-        .root => {
-            try stderr.print("root: \n", .{});
-
-            const root_nodes = ast.dataFromNode(node, .root);
-
-            for (root_nodes.decls, 0..) |child, child_index| {
-                try printAst(ast, child, depth + 1, child_index, root_nodes.decls.len);
-            }
-        },
         .procedure => {
             try stderr.print("proc_decl:\n", .{});
 
@@ -502,6 +496,11 @@ fn printAst(
         },
         .expression_binary_add => {
             const binary_add = ast.dataFromNode(node, .expression_binary_add);
+
+            std.log.info("{}", .{binary_add});
+
+            std.debug.assert(binary_add.left.index != node.index);
+            std.debug.assert(binary_add.right.index != node.index);
 
             try stderr.print("expression_binary_add:\n", .{});
 
