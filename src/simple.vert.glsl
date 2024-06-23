@@ -34,7 +34,7 @@ int add(int a, int b) {
 }
 
 f32 add(f32 a, f32 b) {
-    return a + 2;
+    return a + 4;
 }
 
 void main() {

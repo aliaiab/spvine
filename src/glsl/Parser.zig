@@ -163,7 +163,7 @@ pub fn parseProcedureBody(self: *Parser) !Ast.NodeIndex {
     _ = try self.expectToken(.left_brace);
 
     var statements: std.ArrayListUnmanaged(Ast.NodeIndex) = .{};
-    // defer statements.deinit(self.allocator);
+    defer statements.deinit(self.allocator);
 
     while (self.peekTokenTag().? != .right_brace) {
         const statement = try self.parseStatement();
@@ -174,7 +174,7 @@ pub fn parseProcedureBody(self: *Parser) !Ast.NodeIndex {
     _ = try self.expectToken(.right_brace);
 
     try self.nodeSetData(&node_index, .procedure_body, .{
-        .statements = statements.items,
+        .statements = try self.node_heap.allocateDupe(self.allocator, Ast.NodeIndex, statements.items),
     });
 
     return node_index;
@@ -207,7 +207,7 @@ pub fn parseParamList(self: *Parser) !Ast.NodeIndex {
     errdefer self.unreserveNode(node);
 
     var param_nodes: std.ArrayListUnmanaged(Ast.NodeIndex) = .{};
-    // defer param_nodes.deinit(self.allocator);
+    defer param_nodes.deinit(self.allocator);
 
     while (self.peekTokenTag().? != .right_paren) {
         const param = try self.parseParam();
@@ -218,8 +218,7 @@ pub fn parseParamList(self: *Parser) !Ast.NodeIndex {
     }
 
     try self.nodeSetData(&node, .param_list, .{
-        // .params = try self.node_heap.allocateDupe(self.allocator, Ast.NodeIndex, param_nodes.items),
-        .params = param_nodes.items,
+        .params = try self.node_heap.allocateDupe(self.allocator, Ast.NodeIndex, param_nodes.items),
     });
 
     return node;

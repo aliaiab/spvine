@@ -22,10 +22,10 @@ pub fn main() !void {
     defer file.close();
 
     const file_metadata = try file.metadata();
+    _ = file_metadata; // autofix
 
-    const test_glsl = try std.os.mmap(null, file_metadata.size(), std.os.PROT.READ, .{
-        .TYPE = .PRIVATE,
-    }, file.handle, 0);
+    const test_glsl = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+    defer allocator.free(test_glsl);
 
     var ast = try Ast.parse(allocator, test_glsl);
     defer ast.deinit(allocator);
@@ -395,6 +395,7 @@ fn printAst(
     }
 
     const connecting_string = if (sibling_index == sibling_count - 1) "└" else "├";
+
     const is_leaf = switch (node_tag) {
         .type_expr => true,
         .statement => true,

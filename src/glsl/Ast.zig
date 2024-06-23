@@ -217,7 +217,7 @@ pub const Node = struct {
 };
 
 pub const NodeHeap = struct {
-    chunks: std.SegmentedList(NodeChunk, 4) = .{},
+    chunks: std.SegmentedList(NodeChunk, 0) = .{},
     allocated_size: u32 = 0,
 
     pub const NodeChunk = [1024 * 32]u8;
@@ -231,29 +231,44 @@ pub const NodeHeap = struct {
         allocator: std.mem.Allocator,
         comptime tag: Node.Tag,
     ) !u24 {
-        const Payload = std.meta.TagPayload(Node.ExtraData, tag);
+        const NodeType = std.meta.TagPayload(Node.ExtraData, tag);
 
-        comptime std.debug.assert(@sizeOf(Payload) <= @sizeOf(NodeChunk));
+        const node_index = try self.allocBytes(allocator, @alignOf(NodeType), @sizeOf(NodeType));
 
-        self.allocated_size = std.mem.alignForward(u32, self.allocated_size, @alignOf(Payload));
+        return node_index;
+    }
 
-        const offset: u32 = self.allocated_size;
+    pub fn getPtrFromIndex(self: *NodeHeap, index: u24, comptime T: type, count: usize) []T {
+        const chunk_index = @divTrunc(index, @sizeOf(NodeChunk));
+        const chunk_offset = index - chunk_index * @sizeOf(NodeChunk);
 
-        const new_allocated_size = self.allocated_size + @sizeOf(Payload);
+        const chunk: *NodeChunk = self.chunks.at(chunk_index);
 
-        const next_chunk_index = @divTrunc(new_allocated_size, @sizeOf(NodeChunk));
+        const ptr = chunk[chunk_offset..][0 .. @sizeOf(T) * count];
 
-        if (next_chunk_index == self.chunks.len) {
-            self.allocated_size = next_chunk_index * @sizeOf(NodeChunk);
+        const elem_ptr: [*]T = @ptrCast(@alignCast(ptr.ptr));
+
+        return elem_ptr[0..count];
+    }
+
+    pub fn allocBytes(
+        self: *NodeHeap,
+        allocator: std.mem.Allocator,
+        alignment: usize,
+        size: usize,
+    ) !u24 {
+        self.allocated_size = std.mem.alignForward(u32, self.allocated_size, @intCast(alignment));
+
+        if (self.allocated_size + size >= self.chunks.len * @sizeOf(NodeChunk)) {
+            self.allocated_size = @intCast(self.chunks.len * @sizeOf(NodeChunk));
+            self.allocated_size = std.mem.alignForward(u32, self.allocated_size, @intCast(alignment));
 
             try self.chunks.append(allocator, undefined);
-
-            std.log.info("New chunk", .{});
-
-            return try self.allocateNode(allocator, tag);
         }
 
-        self.allocated_size = new_allocated_size;
+        const offset = self.allocated_size;
+
+        self.allocated_size += @intCast(size);
 
         return @truncate(offset);
     }
@@ -264,25 +279,9 @@ pub const NodeHeap = struct {
         comptime T: type,
         count: usize,
     ) ![]T {
-        self.allocated_size = std.mem.alignForward(u32, self.allocated_size, @alignOf(T));
+        const index = try self.allocBytes(allocator, @alignOf(T), count * @sizeOf(T));
 
-        const offset: u32 = self.allocated_size;
-        const new_allocated_size = self.allocated_size + @sizeOf(T) * count;
-
-        const chunk_index = @divTrunc(new_allocated_size, @sizeOf(NodeChunk));
-        const chunk_offset = offset - chunk_index * @sizeOf(NodeChunk);
-
-        if (chunk_index >= self.chunks.len) {
-            for (self.chunks.len - chunk_index + 1) |_| {
-                try self.chunks.append(allocator, undefined);
-            }
-        }
-
-        const chunk: [*]u8 = self.chunks.uncheckedAt(chunk_index);
-
-        const bytes = (chunk + chunk_offset)[0 .. @sizeOf(T) * count];
-
-        return @alignCast(std.mem.bytesAsSlice(T, bytes));
+        return self.getPtrFromIndex(index, T, count);
     }
 
     pub fn allocateDupe(
@@ -294,6 +293,10 @@ pub const NodeHeap = struct {
         const dest = try self.allocate(allocator, T, slice.len);
 
         @memcpy(dest, slice);
+
+        for (slice, dest) |a, b| {
+            std.debug.assert(std.meta.eql(a, b));
+        }
 
         return dest;
     }
@@ -351,7 +354,7 @@ pub const NodeHeap = struct {
         }
 
         if (node.index == self.allocated_size - payload_size) {
-            self.allocated_size -= payload_size;
+            // self.allocated_size -= payload_size;
         }
     }
 };
