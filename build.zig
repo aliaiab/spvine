@@ -4,15 +4,18 @@ pub fn build(builder: *std.Build) void {
     const optimize = builder.standardOptimizeOption(.{});
 
     _ = builder.addModule("spvine", .{
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = builder.path("src/main.zig"),
     });
 
     const exe = builder.addExecutable(.{
         .name = "spvine",
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = builder.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
+
+    exe.use_llvm = true;
+    exe.use_lld = true;
 
     builder.installArtifact(exe);
 
@@ -28,7 +31,7 @@ pub fn build(builder: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     const exe_tests = builder.addTest(.{
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = builder.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
