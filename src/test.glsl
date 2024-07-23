@@ -110,7 +110,7 @@ void ENTRY {
     float res = add(1, 2 + 1); //sus
 
     //clamp res to 1
-    if (res > 1) {
+    if (res == 1) {
         res -= 1;
     }
     else {
