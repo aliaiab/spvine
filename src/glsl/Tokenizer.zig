@@ -566,7 +566,7 @@ pub const Token = struct {
         return directives.get(string);
     }
 
-    pub const keywords = token_map.ComptimeCanonicalMap(Tag, .{
+    pub const keywords = token_map.StaticCanonicalMap(Tag).initComptime(.{
         .{ "layout", .keyword_layout },
         .{ "restrict", .keyword_restrict },
         .{ "readonly", .keyword_readonly },
@@ -610,7 +610,7 @@ pub const Token = struct {
         .{ "inout", .keyword_inout },
     });
 
-    pub const directives = token_map.ComptimeCanonicalMap(Tag, .{
+    pub const directives = token_map.StaticCanonicalMap(Tag).initComptime(.{
         .{ "define", .directive_define },
         .{ "undef", .directive_undef },
         .{ "if", .directive_if },
@@ -627,7 +627,7 @@ pub const Token = struct {
         .{ "line", .directive_line },
     });
 
-    pub const reserved_keywords = token_map.ComptimeCanonicalMap(void, .{
+    pub const reserved_keywords = token_map.StaticCanonicalMap(void).initComptime(.{
         .{"common"},
         .{"partition"},
         .{"active"},

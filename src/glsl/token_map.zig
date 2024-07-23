@@ -2,110 +2,28 @@
 
 ///Comptime token string map containing canonical token strings
 ///Lookup can be done with non-canonical token strings
-pub fn ComptimeCanonicalMap(
+pub fn StaticCanonicalMap(
     comptime V: type,
-    comptime kvs_list: anytype,
 ) type {
-    const empty_list = kvs_list.len == 0;
-    const precomputed = blk: {
-        @setEvalBranchQuota(1500);
-        const KV = struct {
-            key: []const u8,
-            value: V,
-        };
-        if (empty_list)
-            break :blk .{};
-        var sorted_kvs: [kvs_list.len]KV = undefined;
-        for (kvs_list, 0..) |kv, i| {
-            if (!tokenStringIsCanonical(kv.@"0")) {
-                @compileError(std.fmt.comptimePrint("Token string \"{s}\" contains non-canonical characters", .{kv.@"0"}));
-            }
-
-            if (V != void) {
-                sorted_kvs[i] = .{ .key = kv.@"0", .value = kv.@"1" };
-            } else {
-                sorted_kvs[i] = .{ .key = kv.@"0", .value = {} };
-            }
-        }
-
-        const SortContext = struct {
-            kvs: []KV,
-
-            pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
-                return ctx.kvs[a].key.len < ctx.kvs[b].key.len;
-            }
-
-            pub fn swap(ctx: @This(), a: usize, b: usize) void {
-                return std.mem.swap(KV, &ctx.kvs[a], &ctx.kvs[b]);
-            }
-        };
-
-        std.mem.sortUnstableContext(0, sorted_kvs.len, SortContext{ .kvs = &sorted_kvs });
-
-        const min_len = sorted_kvs[0].key.len;
-        const max_len = sorted_kvs[sorted_kvs.len - 1].key.len;
-        var len_indexes: [max_len + 1]usize = undefined;
-        var len: usize = 0;
-        var i: usize = 0;
-        while (len <= max_len) : (len += 1) {
-            // find the first keyword len == len
-            while (len > sorted_kvs[i].key.len) {
-                i += 1;
-            }
-            len_indexes[len] = i;
-        }
-        break :blk .{
-            .min_len = min_len,
-            .max_len = max_len,
-            .sorted_kvs = sorted_kvs,
-            .len_indexes = len_indexes,
-        };
-    };
-
-    return struct {
-        /// Array of `struct { key: []const u8, value: V }` where `value` is `void{}` if `V` is `void`.
-        /// Sorted by `key` length.
-        pub const kvs = precomputed.sorted_kvs;
-
-        /// Checks if the map has a value for the key.
-        pub fn has(str: []const u8) bool {
-            return get(str) != null;
-        }
-
-        /// Returns the value for the key if any, else null.
-        pub fn get(str: []const u8) ?V {
-            if (empty_list)
-                return null;
-
-            return precomputed.sorted_kvs[getIndex(str) orelse return null].value;
-        }
-
-        pub fn getIndex(str: []const u8) ?usize {
-            if (empty_list)
-                return null;
-
-            const character_count = tokenStringCharCount(str);
-
-            if (character_count < precomputed.min_len or character_count > precomputed.max_len)
-                return null;
-
-            var i = precomputed.len_indexes[character_count];
-
-            while (true) {
-                const kv = precomputed.sorted_kvs[i];
-                if (kv.key.len != character_count)
-                    return null;
-                if (tokenStringEqlToCanonical(str, kv.key))
-                    return i;
-                i += 1;
-                if (i >= precomputed.sorted_kvs.len)
-                    return null;
-            }
-        }
-    };
+    return std.static_string_map.StaticStringMapWithEql(V, tokenStringEql);
 }
 
+pub fn Map(comptime V: type) type {
+    return std.HashMapUnmanaged([]const u8, V, TokenStringContext, 80);
+}
+
+pub const TokenStringContext = struct {
+    pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
+        return tokenStringEql(a, b);
+    }
+
+    pub fn hash(_: @This(), a: []const u8) u64 {
+        return tokenStringHash(a);
+    }
+};
+
 ///Compares two token strings whilst ignoring line continuation digraphs in the non-canonical string
+///The canonical string must not have line continuation characters, eg the literal "void" not "voi\\nd"
 pub fn tokenStringEqlToCanonical(a: []const u8, canonical: []const u8) bool {
     if (a.ptr == canonical.ptr) return true;
 
@@ -205,20 +123,6 @@ pub fn tokenStringHash(str: []const u8) u64 {
 
     return hash;
 }
-
-pub fn Map(comptime V: type) type {
-    return std.HashMapUnmanaged([]const u8, V, TokenStringContext, 80);
-}
-
-pub const TokenStringContext = struct {
-    pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
-        return tokenStringEql(a, b);
-    }
-
-    pub fn hash(_: @This(), a: []const u8) u64 {
-        return tokenStringHash(a);
-    }
-};
 
 test "Token string equality" {
     const expect = std.testing.expect;

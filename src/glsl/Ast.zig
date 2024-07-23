@@ -131,11 +131,12 @@ pub const NodeIndex = packed struct(u32) {
     pub const IndexInt = u24;
 
     pub const nil: NodeIndex = .{
+        //This is undefined so we don't have to waste a bit on the nil node in Node.Tag
         .tag = undefined,
         .index = 0,
     };
 
-    pub fn isNil(self: NodeIndex) bool {
+    pub inline fn isNil(self: NodeIndex) bool {
         return self.index == 0;
     }
 };
@@ -217,10 +218,12 @@ pub const Node = struct {
 };
 
 pub const NodeHeap = struct {
-    chunks: std.SegmentedList(NodeChunk, 0) = .{},
+    chunks: ChunkList = .{},
     allocated_size: u32 = 0,
 
     pub const NodeChunk = [1024 * 32]u8;
+
+    const ChunkList = std.SegmentedList(NodeChunk, 0);
 
     pub fn deinit(self: *NodeHeap, allocator: std.mem.Allocator) void {
         self.chunks.deinit(allocator);
@@ -230,7 +233,7 @@ pub const NodeHeap = struct {
         self: *NodeHeap,
         allocator: std.mem.Allocator,
         comptime tag: Node.Tag,
-    ) !u24 {
+    ) !NodeIndex.IndexInt {
         const NodeType = std.meta.TagPayload(Node.ExtraData, tag);
 
         const node_index = try self.allocBytes(allocator, @alignOf(NodeType), @sizeOf(NodeType));
@@ -238,7 +241,12 @@ pub const NodeHeap = struct {
         return node_index;
     }
 
-    pub fn getPtrFromIndex(self: *NodeHeap, index: u24, comptime T: type, count: usize) []T {
+    pub fn getPtrFromIndex(
+        self: *NodeHeap,
+        index: NodeIndex.IndexInt,
+        comptime T: type,
+        count: usize,
+    ) []T {
         const chunk_index = @divTrunc(index, @sizeOf(NodeChunk));
         const chunk_offset = index - chunk_index * @sizeOf(NodeChunk);
 
@@ -256,10 +264,10 @@ pub const NodeHeap = struct {
         allocator: std.mem.Allocator,
         alignment: usize,
         size: usize,
-    ) !u24 {
+    ) !NodeIndex.IndexInt {
         self.allocated_size = std.mem.alignForward(u32, self.allocated_size, @intCast(alignment));
 
-        if (self.allocated_size + size >= self.chunks.len * @sizeOf(NodeChunk)) {
+        if (self.allocated_size + size > self.chunks.len * @sizeOf(NodeChunk)) {
             self.allocated_size = @intCast(self.chunks.len * @sizeOf(NodeChunk));
             self.allocated_size = std.mem.alignForward(u32, self.allocated_size, @intCast(alignment));
 
@@ -270,7 +278,7 @@ pub const NodeHeap = struct {
 
         self.allocated_size += @intCast(size);
 
-        return @truncate(offset);
+        return @intCast(offset);
     }
 
     pub fn allocate(
@@ -311,16 +319,21 @@ pub const NodeHeap = struct {
     }
 
     pub fn getNodePtr(
-        self: *NodeHeap,
+        self: NodeHeap,
         comptime node_tag: Node.Tag,
         node_index: u24,
     ) *std.meta.TagPayload(Node.ExtraData, node_tag) {
         const Payload = std.meta.TagPayload(Node.ExtraData, node_tag);
 
-        const chunk_index = @divTrunc(node_index, @sizeOf(NodeChunk));
-        const chunk_offset = node_index - chunk_index *% @sizeOf(NodeChunk);
+        std.debug.assert(node_index < self.allocated_size);
 
-        const chunk: [*]u8 = self.chunks.uncheckedAt(chunk_index);
+        const chunk_index = @divTrunc(node_index, @sizeOf(NodeChunk));
+        const chunk_offset = node_index - chunk_index * @sizeOf(NodeChunk);
+
+        //Sneaky hack to get around the constness metaprogramming in std.SegmentedList
+        const chunks: *ChunkList = @constCast(&self.chunks);
+
+        const chunk: [*]u8 = chunks.uncheckedAt(chunk_index);
 
         const bytes = (chunk + chunk_offset)[0..@sizeOf(Payload)];
 
@@ -332,19 +345,11 @@ pub const NodeHeap = struct {
         comptime node_tag: Node.Tag,
         node_index: u24,
     ) *const std.meta.TagPayload(Node.ExtraData, node_tag) {
-        const Payload = std.meta.TagPayload(Node.ExtraData, node_tag);
-
-        const chunk_index = @divTrunc(node_index, @sizeOf(NodeChunk));
-        const chunk_offset = node_index - chunk_index * @sizeOf(NodeChunk);
-
-        const chunk: [*]const u8 = self.chunks.uncheckedAt(chunk_index);
-
-        const bytes = (chunk + chunk_offset)[0..@sizeOf(Payload)];
-
-        return @alignCast(std.mem.bytesAsValue(Payload, bytes));
+        return self.getNodePtr(node_tag, node_index);
     }
 
     pub fn freeNode(self: *NodeHeap, node: NodeIndex) void {
+        //TODO: this really isn't necessary and is mostly a rss optimization, maybe let's just not
         var payload_size: u32 = 0;
 
         switch (node.tag) {
