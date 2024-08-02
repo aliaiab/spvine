@@ -498,8 +498,6 @@ fn printAst(
         .expression_binary_add => {
             const binary_add = ast.dataFromNode(node, .expression_binary_add);
 
-            std.log.info("{}", .{binary_add});
-
             std.debug.assert(binary_add.left.index != node.index);
             std.debug.assert(binary_add.right.index != node.index);
 

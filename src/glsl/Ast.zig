@@ -132,12 +132,12 @@ pub const NodeIndex = packed struct(u32) {
 
     pub const nil: NodeIndex = .{
         //This is undefined so we don't have to waste a bit on the nil node in Node.Tag
-        .tag = undefined,
+        .tag = @enumFromInt(0),
         .index = 0,
     };
 
     pub inline fn isNil(self: NodeIndex) bool {
-        return self.index == 0;
+        return @as(u32, @bitCast(self)) == 0;
     }
 };
 
@@ -186,7 +186,10 @@ pub const Node = struct {
         statement_list: struct {
             statements: []const NodeIndex,
         },
-        statement: struct {},
+        statement: struct {
+            //TODO: this is inelgent.
+            dummy_field: u0 align(8),
+        },
         statement_var_init: struct {
             type_expr: NodeIndex,
             identifier: TokenIndex,
@@ -221,7 +224,7 @@ pub const NodeHeap = struct {
     chunks: ChunkList = .{},
     allocated_size: u32 = 0,
 
-    pub const NodeChunk = [1024 * 32]u8;
+    pub const NodeChunk = [1024 * 64]u8;
 
     const ChunkList = std.SegmentedList(NodeChunk, 0);
 
@@ -237,6 +240,8 @@ pub const NodeHeap = struct {
         const NodeType = std.meta.TagPayload(Node.ExtraData, tag);
 
         const node_index = try self.allocBytes(allocator, @alignOf(NodeType), @sizeOf(NodeType));
+
+        std.debug.assert(std.mem.isAligned(node_index, @alignOf(NodeType)));
 
         return node_index;
     }
@@ -265,20 +270,24 @@ pub const NodeHeap = struct {
         alignment: usize,
         size: usize,
     ) !NodeIndex.IndexInt {
-        self.allocated_size = std.mem.alignForward(u32, self.allocated_size, @intCast(alignment));
+        while (true) {
+            const adjust_off = std.mem.alignPointerOffset(
+                @as([*]allowzero u8, @ptrFromInt(self.allocated_size)),
+                alignment,
+            ) orelse return error.OutOfMemory;
+            const adjusted_index = self.allocated_size + adjust_off;
+            const new_end_index = adjusted_index + size;
 
-        if (self.allocated_size + size > self.chunks.len * @sizeOf(NodeChunk)) {
-            self.allocated_size = @intCast(self.chunks.len * @sizeOf(NodeChunk));
-            self.allocated_size = std.mem.alignForward(u32, self.allocated_size, @intCast(alignment));
+            if (new_end_index > self.chunks.len * @sizeOf(NodeChunk)) {
+                try self.chunks.append(allocator, undefined);
 
-            try self.chunks.append(allocator, undefined);
+                continue;
+            }
+
+            self.allocated_size = @intCast(new_end_index);
+
+            return @intCast(adjusted_index);
         }
-
-        const offset = self.allocated_size;
-
-        self.allocated_size += @intCast(size);
-
-        return @intCast(offset);
     }
 
     pub fn allocate(
@@ -301,10 +310,6 @@ pub const NodeHeap = struct {
         const dest = try self.allocate(allocator, T, slice.len);
 
         @memcpy(dest, slice);
-
-        for (slice, dest) |a, b| {
-            std.debug.assert(std.meta.eql(a, b));
-        }
 
         return dest;
     }
@@ -333,9 +338,13 @@ pub const NodeHeap = struct {
         //Sneaky hack to get around the constness metaprogramming in std.SegmentedList
         const chunks: *ChunkList = @constCast(&self.chunks);
 
-        const chunk: [*]u8 = chunks.uncheckedAt(chunk_index);
+        const chunk: [*]u8 = chunks.at(chunk_index);
 
         const bytes = (chunk + chunk_offset)[0..@sizeOf(Payload)];
+
+        if (!std.mem.isAligned(@intFromPtr(bytes), @alignOf(Payload))) {
+            std.log.info("expected alignment {}, found address x{x}", .{ @alignOf(Payload), @intFromPtr(bytes) });
+        }
 
         return @alignCast(std.mem.bytesAsValue(Payload, bytes));
     }
