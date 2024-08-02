@@ -1,9 +1,10 @@
 #version 450
+
+void testMain() {}
+
 #define ADD +
 #define FLOAT FOLLL
 
-// #include <std>
-// #include "hello, world"
 #define TEST_FLAG 0
 
 #if TEST_FLAG
@@ -95,7 +96,7 @@ float sub(float x, float y, u32 z) {
 
 //-DCOMPILE_ENTRY 1
 
-#define COMPILE_ENTRY 0
+#define COMPILE_ENTRY 1
 #define OOPS 0
 
 #if OOPS
@@ -107,24 +108,24 @@ float sub(float x, float y, u32 z) {
 */
 #if COMPILE_ENTRY
 void ENTRY {
-    float res = add(1, 2 + 1); //sus
+    // float res = add(1, 2 + 1); //sus
+
+    // #define BOOL_TRUE true
 
     //clamp res to 1
-    if (res == 1) {
-        res -= 1;
+    if (res) {
+        // res -= 1;
     }
     else {
-        res += 2;
+        // res += 2;
     }
 
-    #define BOOL_TRUE true
+    // u32 res_as_int = (); /* here is an cast to int */
 
-    u32 res_as_int = u32(BOOL_TRUE); /* here is an cast to int */
+    // res_as_int *= 3;
+    // res_as_int = res_as_int * 10;
+    // res_as_int /= 2 + 3;
 
-    res_as_int *= 3;
-    res_as_int = res_as_int * 10;
-    res_as_int /= 2 + 3;
-
-    gl_Position = vec4(0);
+    // gl_Position = vec4(0);
 }
 #endif

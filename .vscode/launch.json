@@ -1,0 +1,14 @@
+{
+    "configurations": [
+        {
+            "name": "spvine",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/zig-out/bin/spvine",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "internalConsoleOptions": "neverOpen",
+            "preLaunchTask": "build",
+        }
+    ]
+}

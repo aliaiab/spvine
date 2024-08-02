@@ -41,6 +41,9 @@ pub fn deinit(self: *Parser) void {
 
 ///Root parse node
 pub fn parse(self: *Parser) !void {
+    std.log.info("begin: {s}", .{@src().fn_name});
+    defer std.log.info("end: {s}", .{@src().fn_name});
+
     var state: enum {
         start,
         directive,
@@ -49,8 +52,8 @@ pub fn parse(self: *Parser) !void {
     var root_nodes: std.ArrayListUnmanaged(Ast.NodeIndex) = .{};
     defer root_nodes.deinit(self.allocator);
 
-    _ = try self.expectToken(.directive_version);
-    _ = try self.expectToken(.literal_number);
+    // _ = try self.expectToken(.directive_version);
+    // _ = try self.expectToken(.literal_number);
 
     while (self.token_index < self.token_tags.len) {
         switch (state) {
@@ -106,6 +109,9 @@ pub fn parse(self: *Parser) !void {
 }
 
 pub fn parseStruct(self: *Parser) !Ast.NodeIndex {
+    std.log.info("begin: {s}", .{@src().fn_name});
+    defer std.log.info("end: {s}", .{@src().fn_name});
+
     const node_index = try self.reserveNode(.procedure);
     errdefer self.unreserveNode(node_index);
 
@@ -133,35 +139,48 @@ pub fn parseStruct(self: *Parser) !Ast.NodeIndex {
     return node_index;
 }
 
-pub fn parseProcedureProto(self: *Parser) !Ast.NodeIndex {
-    var node_index = try self.reserveNode(.procedure_proto);
+pub fn parseProcedure(self: *Parser) !Ast.NodeIndex {
+    std.log.info("begin: {s}", .{@src().fn_name});
+    defer std.log.info("end: {s}", .{@src().fn_name});
+
+    var node_index = try self.reserveNode(.procedure);
     errdefer self.unreserveNode(node_index);
 
-    const type_expr = try self.parseTypeExpr();
+    const proto = try self.parseProcedureProto();
 
-    const identifier = try self.expectToken(.identifier);
+    var body = Ast.NodeIndex.nil;
 
-    _ = try self.expectToken(.left_paren);
+    if (self.peekTokenTag() == .left_brace) {
+        body = try self.parseProcedureBody();
+    } else {
+        _ = try self.expectToken(.semicolon);
+    }
 
-    const param_list = try self.parseParamList();
-
-    _ = try self.expectToken(.right_paren);
-
-    try self.nodeSetData(&node_index, .procedure_proto, .{
-        .return_type = type_expr,
-        .name = identifier,
-        .param_list = param_list,
+    try self.nodeSetData(&node_index, .procedure, .{
+        .prototype = proto,
+        .body = body,
     });
+
+    std.debug.assert(!proto.isNil());
+    std.debug.assert(!node_index.isNil());
+
+    const proc = self.node_heap.getNodePtr(.procedure, node_index.index);
+
+    std.debug.assert(!proc.prototype.isNil());
 
     return node_index;
 }
 
 pub fn parseProcedureBody(self: *Parser) !Ast.NodeIndex {
+    std.log.info("begin: {s}", .{@src().fn_name});
+    defer std.log.info("end: {s}", .{@src().fn_name});
+
     var node_index = try self.reserveNode(.procedure_body);
     errdefer self.unreserveNode(node_index);
 
     _ = try self.expectToken(.left_brace);
 
+    //TODO: use a scratch arena
     var statements: std.ArrayListUnmanaged(Ast.NodeIndex) = .{};
     defer statements.deinit(self.allocator);
 
@@ -180,23 +199,27 @@ pub fn parseProcedureBody(self: *Parser) !Ast.NodeIndex {
     return node_index;
 }
 
-pub fn parseProcedure(self: *Parser) !Ast.NodeIndex {
-    var node_index = try self.reserveNode(.procedure);
+pub fn parseProcedureProto(self: *Parser) !Ast.NodeIndex {
+    std.log.info("begin: {s}", .{@src().fn_name});
+    defer std.log.info("end: {s}", .{@src().fn_name});
+
+    var node_index = try self.reserveNode(.procedure_proto);
     errdefer self.unreserveNode(node_index);
 
-    const proto = try self.parseProcedureProto();
+    const type_expr = try self.parseTypeExpr();
 
-    var body = Ast.NodeIndex.nil;
+    const identifier = try self.expectToken(.identifier);
 
-    if (self.peekTokenTag() == .left_brace) {
-        body = try self.parseProcedureBody();
-    } else {
-        _ = try self.expectToken(.semicolon);
-    }
+    _ = try self.expectToken(.left_paren);
 
-    try self.nodeSetData(&node_index, .procedure, .{
-        .prototype = proto,
-        .body = body,
+    const param_list = try self.parseParamList();
+
+    _ = try self.expectToken(.right_paren);
+
+    try self.nodeSetData(&node_index, .procedure_proto, .{
+        .return_type = type_expr,
+        .name = identifier,
+        .param_list = param_list,
     });
 
     return node_index;
@@ -240,15 +263,16 @@ pub fn parseParam(self: *Parser) !Ast.NodeIndex {
 }
 
 pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
-    var node = try self.reserveNode(.statement);
-    errdefer self.unreserveNode(node);
-
     switch (self.peekTokenTag().?) {
         .left_brace => {
+            //allocate worst case
+            var node = try self.reserveNode(.statement_list);
+            errdefer self.unreserveNode(node);
+
             _ = self.nextToken();
 
             var statements: std.ArrayListUnmanaged(Ast.NodeIndex) = .{};
-            // defer statements.deinit(self.allocator);
+            defer statements.deinit(self.allocator);
 
             while (self.peekTokenTag().? != .right_brace) {
                 const statement = try self.parseStatement();
@@ -261,15 +285,20 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
             _ = try self.expectToken(.right_brace);
 
             try self.nodeSetData(&node, .statement_list, .{
-                // .statements = try self.node_heap.allocateDupe(self.allocator, Ast.NodeIndex, statements.items),
-                .statements = statements.items,
+                .statements = try self.node_heap.allocateDupe(self.allocator, Ast.NodeIndex, statements.items),
             });
+
+            return node;
         },
         .keyword_float,
         .keyword_uint,
         .keyword_int,
         .keyword_void,
         => {
+            //allocate worst case
+            var node = try self.reserveNode(.statement_var_init);
+            errdefer self.unreserveNode(node);
+
             const type_expr = try self.parseTypeExpr();
 
             const variable_name = try self.expectToken(.identifier);
@@ -289,9 +318,15 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
                     .expression = Ast.NodeIndex.nil,
                 });
             }
+
+            return node;
         },
         .identifier => {
             const variable_name = try self.expectToken(.identifier);
+
+            //allocate worst case
+            var node = try self.reserveNode(.statement_assign_equal);
+            errdefer self.unreserveNode(node);
 
             if (self.eatToken(.equals) != null) {
                 const expression = try self.parseExpression();
@@ -300,9 +335,15 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
                     .expression = expression,
                 });
             }
+
+            return node;
         },
         .keyword_if => {
             _ = self.nextToken();
+
+            //allocate worst case
+            var node = try self.reserveNode(.statement_if);
+            errdefer self.unreserveNode(node);
 
             const cond_expr = try self.parseExpression();
 
@@ -321,9 +362,15 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
                 .taken_statement = taken_statment,
                 .not_taken_statement = not_taken_statment,
             });
+
+            return node;
         },
         .keyword_return => {
             _ = self.nextToken();
+
+            //allocate worst case
+            var node = try self.reserveNode(.statement_return);
+            errdefer self.unreserveNode(node);
 
             var expression: Ast.NodeIndex = Ast.NodeIndex.nil;
 
@@ -331,9 +378,13 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
                 expression = try self.parseExpression();
             }
 
+            _ = try self.expectToken(.semicolon);
+
             try self.nodeSetData(&node, .statement_return, .{
                 .expression = expression,
             });
+
+            return node;
         },
         .semicolon => {
             _ = self.nextToken();
@@ -342,13 +393,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
         else => return self.unexpectedToken(),
     }
 
-    if (node.tag != .statement_list and
-        node.tag != .statement_if)
-    {
-        _ = try self.expectToken(.semicolon);
-    }
-
-    return node;
+    return Ast.NodeIndex.nil;
 }
 
 pub fn parseExpression(self: *Parser) anyerror!Ast.NodeIndex {
@@ -538,7 +583,7 @@ pub fn unexpectedToken(self: *Parser) anyerror {
 }
 
 pub fn eatToken(self: *Parser, tag: Token.Tag) ?u32 {
-    if (self.token_index < self.token_tags.len and self.token_tags[self.token_index] == tag) {
+    if (self.token_index < self.token_tags.len and self.peekTokenTag() != null and self.peekTokenTag() == tag) {
         return self.nextToken();
     } else {
         return null;
@@ -553,6 +598,11 @@ pub fn nextToken(self: *Parser) ?u32 {
     return result;
 }
 
+pub fn peekTokenTag(self: Parser) ?Token.Tag {
+    return self.token_tags[self.peekToken() orelse return null];
+}
+
+//TODO: support preprocessor directives inside function bodies by modifying this to allow that
 pub fn peekToken(self: Parser) ?u32 {
     const result = self.token_index;
 
@@ -561,10 +611,6 @@ pub fn peekToken(self: Parser) ?u32 {
     }
 
     return result;
-}
-
-pub fn peekTokenTag(self: Parser) ?Token.Tag {
-    return self.token_tags[self.peekToken() orelse return null];
 }
 
 const std = @import("std");
