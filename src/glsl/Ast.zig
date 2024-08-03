@@ -150,14 +150,15 @@ pub const Node = struct {
         param_expr,
         procedure_body,
         statement_list,
-        statement,
         statement_var_init,
         statement_assign_equal,
+        statement_assign_add,
         statement_if,
         statement_return,
         expression_literal_number,
         expression_identifier,
         expression_binary_add,
+        expression_binary_mul,
     };
 
     pub const ExtraData = union(Tag) {
@@ -186,16 +187,16 @@ pub const Node = struct {
         statement_list: struct {
             statements: []const NodeIndex,
         },
-        statement: struct {
-            //TODO: this is inelgent.
-            dummy_field: u0 align(8),
-        },
         statement_var_init: struct {
             type_expr: NodeIndex,
             identifier: TokenIndex,
             expression: NodeIndex,
         },
         statement_assign_equal: struct {
+            identifier: TokenIndex,
+            expression: NodeIndex,
+        },
+        statement_assign_add: struct {
             identifier: TokenIndex,
             expression: NodeIndex,
         },
@@ -214,6 +215,10 @@ pub const Node = struct {
             token: TokenIndex,
         },
         expression_binary_add: struct {
+            left: NodeIndex,
+            right: NodeIndex,
+        },
+        expression_binary_mul: struct {
             left: NodeIndex,
             right: NodeIndex,
         },

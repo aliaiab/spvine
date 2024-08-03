@@ -52,8 +52,8 @@ pub fn parse(self: *Parser) !void {
     var root_nodes: std.ArrayListUnmanaged(Ast.NodeIndex) = .{};
     defer root_nodes.deinit(self.allocator);
 
-    // _ = try self.expectToken(.directive_version);
-    // _ = try self.expectToken(.literal_number);
+    _ = try self.expectToken(.directive_version);
+    _ = try self.expectToken(.literal_number);
 
     while (self.token_index < self.token_tags.len) {
         switch (state) {
@@ -324,19 +324,41 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
         .identifier => {
             const variable_name = try self.expectToken(.identifier);
 
-            //allocate worst case
-            var node = try self.reserveNode(.statement_assign_equal);
-            errdefer self.unreserveNode(node);
+            switch (self.peekTokenTag().?) {
+                Token.Tag.equals => {
+                    _ = self.nextToken();
 
-            if (self.eatToken(.equals) != null) {
-                const expression = try self.parseExpression();
-                try self.nodeSetData(&node, .statement_assign_equal, .{
-                    .identifier = variable_name,
-                    .expression = expression,
-                });
+                    //allocate worst case
+                    var node = try self.reserveNode(.statement_assign_equal);
+                    errdefer self.unreserveNode(node);
+
+                    const expression = try self.parseExpression();
+
+                    try self.nodeSetData(&node, .statement_assign_equal, .{
+                        .identifier = variable_name,
+                        .expression = expression,
+                    });
+
+                    return node;
+                },
+                Token.Tag.plus_equals => {
+                    _ = self.nextToken();
+
+                    //allocate worst case
+                    var node = try self.reserveNode(.statement_assign_add);
+                    errdefer self.unreserveNode(node);
+
+                    const expression = try self.parseExpression();
+
+                    try self.nodeSetData(&node, .statement_assign_add, .{
+                        .identifier = variable_name,
+                        .expression = expression,
+                    });
+
+                    return node;
+                },
+                else => {},
             }
-
-            return node;
         },
         .keyword_if => {
             _ = self.nextToken();
@@ -396,98 +418,87 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
     return Ast.NodeIndex.nil;
 }
 
-pub fn parseExpression(self: *Parser) anyerror!Ast.NodeIndex {
-    switch (self.peekTokenTag().?) {
-        .identifier,
-        .literal_number,
-        .keyword_true,
-        .keyword_false,
-        => {
-            switch (self.token_tags[self.token_index + 1]) {
-                .plus => {
-                    const node = try self.parseBinaryExpression();
+pub fn parseExpression(
+    self: *Parser,
+) anyerror!Ast.NodeIndex {
+    var lhs = Ast.NodeIndex.nil;
+    var rhs = Ast.NodeIndex.nil;
 
-                    return node;
-                },
-                else => {
-                    return try self.parseUnaryExpression();
-                },
-            }
-        },
-        .left_paren => {
-            _ = self.nextToken();
+    while (true) {
+        var node = try self.reserveNode(.expression_literal_number);
+        errdefer self.unreserveNode(node);
 
-            const node = try self.parseExpression();
+        switch (self.peekTokenTag().?) {
+            .literal_number,
+            .keyword_true,
+            .keyword_false,
+            => {
+                const literal = self.nextToken().?;
 
-            _ = try self.expectToken(.right_paren);
+                try self.nodeSetData(&node, .expression_literal_number, .{
+                    .token = literal,
+                });
 
-            return node;
-        },
-        else => return self.unexpectedToken(),
+                lhs = node;
+            },
+            .identifier => {
+                const identifier = try self.expectToken(.identifier);
+
+                try self.nodeSetData(&node, .expression_identifier, .{
+                    .token = identifier,
+                });
+
+                lhs = node;
+            },
+            .left_paren => {
+                const open_paren = self.eatToken(.left_paren);
+                defer if (open_paren) |_| {
+                    _ = self.eatToken(.right_paren);
+                };
+
+                const sub_node = try self.parseExpression();
+
+                lhs = sub_node;
+            },
+            .plus => {
+                _ = self.nextToken();
+
+                rhs = try self.parseExpression();
+
+                const old_lhs = lhs;
+
+                lhs = try self.reserveNode(.expression_binary_add);
+
+                try self.nodeSetData(&lhs, .expression_binary_add, .{
+                    .left = old_lhs,
+                    .right = rhs,
+                });
+            },
+            .asterisk => {
+                _ = self.nextToken();
+
+                rhs = try self.parseExpression();
+
+                const old_lhs = lhs;
+
+                lhs = try self.reserveNode(.expression_binary_mul);
+
+                try self.nodeSetData(&lhs, .expression_binary_mul, .{
+                    .left = old_lhs,
+                    .right = rhs,
+                });
+            },
+            else => {
+                if (!lhs.isNil()) {
+                    return lhs;
+                }
+
+                return self.unexpectedToken();
+            },
+        }
     }
 
-    return 0;
-}
-
-pub fn parseUnaryExpression(self: *Parser) anyerror!Ast.NodeIndex {
-    var node = try self.reserveNode(.expression_literal_number);
-    errdefer self.unreserveNode(node);
-
-    const open_paren = self.eatToken(.left_paren);
-
-    switch (self.peekTokenTag().?) {
-        .literal_number,
-        .keyword_true,
-        .keyword_false,
-        => {
-            const literal = self.nextToken().?;
-
-            try self.nodeSetData(&node, .expression_literal_number, .{
-                .token = literal,
-            });
-        },
-        .identifier => {
-            const identifier = try self.expectToken(.identifier);
-
-            try self.nodeSetData(&node, .expression_identifier, .{
-                .token = identifier,
-            });
-        },
-        else => return self.unexpectedToken(),
-    }
-
-    if (open_paren != null) {
-        _ = try self.expectToken(.right_paren);
-    }
-
-    return node;
-}
-
-pub fn parseBinaryExpression(self: *Parser) anyerror!Ast.NodeIndex {
-    var node = try self.reserveNode(.expression_binary_add);
-    errdefer self.unreserveNode(node);
-
-    const lhs = try self.parseUnaryExpression();
-
-    switch (self.peekTokenTag().?) {
-        .plus => {
-            _ = self.nextToken();
-        },
-        else => return lhs,
-    }
-
-    const rhs = try self.parseUnaryExpression();
-
-    std.log.info("node: {}", .{node});
-    std.log.info("lhs: {}", .{lhs});
-    std.log.info("rhs: {}", .{rhs});
-
-    try self.nodeSetData(&node, .expression_binary_add, .{
-        .left = lhs,
-        .right = rhs,
-    });
-
-    return node;
+    return lhs;
 }
 
 pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
@@ -599,12 +610,20 @@ pub fn nextToken(self: *Parser) ?u32 {
 }
 
 pub fn peekTokenTag(self: Parser) ?Token.Tag {
-    return self.token_tags[self.peekToken() orelse return null];
+    return self.lookAheadTokenTag(0);
+}
+
+pub fn lookAheadTokenTag(self: Parser, amount: u32) ?Token.Tag {
+    return self.token_tags[self.lookAheadToken(amount) orelse return null];
 }
 
 //TODO: support preprocessor directives inside function bodies by modifying this to allow that
 pub fn peekToken(self: Parser) ?u32 {
-    const result = self.token_index;
+    return self.lookAheadToken(0);
+}
+
+pub fn lookAheadToken(self: Parser, amount: u32) ?u32 {
+    const result = self.token_index + amount;
 
     if (result >= self.token_tags.len) {
         return null;
