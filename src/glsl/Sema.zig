@@ -121,6 +121,7 @@ pub fn analyseProcedure(
         try self.scopeDefine(ast.tokenString(param.name));
     }
 
+    //TODO: handle forward declaration
     if (procedure.body.isNil()) return;
 
     const body = ast.dataFromNode(procedure.body, .procedure_body);
@@ -137,7 +138,7 @@ pub fn analyseProcedure(
     }
 
     if (self.scopeResolve("x") != null) {
-        std.log.info("Has param 'x'!!!!", .{});
+        std.log.info("Has var 'x'!!!!", .{});
     }
 }
 

@@ -1,131 +1,33 @@
 #version 450
 
-void testMain() {}
+#  define f32 float 
+#  define u32 uint 
 
-#define ADD +
-#define FLOAT FOLLL
+//#include "simple.vert.glsl"
 
-#define TEST_FLAG 0
+#define SIX 6
 
-#if TEST_FLAG
-#define TEST_FLAG_2 1
-#define PI 3.1415926
-#endif
+f32 add(f32 a, f32 b) {
+    return a + b * 10;
+}
 
-#ifndef TEST_FLAG_2 
-#error TEST_FLAG_2 is sus.
-#endif
+//Vertex main
+void vertex_main(
+    u32 z,
+    u32 w,
+    u32 k,
+) {
+    f32 x = w;
+    f32 y = 0;
 
-// #undef TEST_FLAG_2
+    x = y;
+    y = x;
 
-#define ENTRYPOINT main()
-
-#define ENTRY ENTRYPOINT
-#define ENTRY_ALIAS ENTRY
-
-#define FUNC(x, y) x + y
-
-//#line 10 "sus.h"
-
-// #define i32 int
-#define u32 uint
-#define f32 float
-
-// const u32 x = 2;
-
-// struct IInt64 {
-//     i32 val;
-//     // ;
-// };
-
-// struct IUInt64 {
-//     // IInt64 vali;
-//     // u32 valu;
-// };
-
-//adds two numbers, a and b
-float add(float a, float x) { //body
-    //variable decl
-    float f;
-
-    //variable asign
-    f = 3;
-
-    //variable init
-    float c = a + b; float n = 3;
-
-    if (c) {
-        c = c + 3;
-
-        {
-            int scoped = 3;
-        
-            c = c + 10;
-            f = c + 10;
-        }
-    } else {
-        c = 10;
-        c = 2 + c;
-        f = c + 1;
+    if (y + 10) {
+        y += 3 * w;
     }
 
-    if (true) c = 3;
-
-    // c = 3;
-    // c += 3;
-    // c -= 3;
-    // c *= 3;
-
-    float e = c + b;
-    float d = e + b;
-
-    return c + 3;
+    y += (3) + ((3 + (SIX + 10)) + 5) + (4 + 3030) + 3 + SIX;
+    x += x + y * 10;
+    x += x * 10 + y;
 }
-
-void meme() {}
-
-void sus(float a) {
-    return a;
-}
-
-float sub(float x, float y, u32 z) {
-    float d = z;
-
-    return x + y;
-}
-
-//-DCOMPILE_ENTRY 1
-
-#define COMPILE_ENTRY 1
-#define OOPS 0
-
-#if OOPS
-#error "Oops"
-#endif 
-
-/* 
-    entrypoint procedure
-*/
-#if COMPILE_ENTRY
-void ENTRY {
-    // float res = add(1, 2 + 1); //sus
-
-    // #define BOOL_TRUE true
-
-    //clamp res to 1
-    if (res) {
-        // res -= 1;
-    }
-    else {
-        // res += 2;
-    }
-
-    // u32 res_as_int = (); /* here is an cast to int */
-
-    // res_as_int *= 3;
-    // res_as_int = res_as_int * 10;
-    // res_as_int /= 2 + 3;
-
-    // gl_Position = vec4(0);
-}
-#endif

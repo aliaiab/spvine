@@ -398,7 +398,6 @@ fn printAst(
 
     const is_leaf = switch (node_tag) {
         .type_expr => true,
-        .statement => true,
         else => false,
     };
 
@@ -480,6 +479,20 @@ fn printAst(
             try printAst(ast, var_init.type_expr, depth + 1, 0, 2);
             try printAst(ast, var_init.expression, depth + 1, 1, 2);
         },
+        .statement_assign_equal => {
+            const assign_equal = ast.dataFromNode(node, .statement_assign_equal);
+
+            try stderr.print("statement_assign_equal: {s}\n", .{ast.tokenString(assign_equal.identifier)});
+
+            try printAst(ast, assign_equal.expression, depth + 1, 0, 1);
+        },
+        .statement_assign_add => {
+            const assign_equal = ast.dataFromNode(node, .statement_assign_add);
+
+            try stderr.print("statement_assign_add: {s}\n", .{ast.tokenString(assign_equal.identifier)});
+
+            try printAst(ast, assign_equal.expression, depth + 1, 0, 1);
+        },
         .statement_if => {
             const if_statement = ast.dataFromNode(node, .statement_if);
 
@@ -506,9 +519,30 @@ fn printAst(
             try printAst(ast, binary_add.left, depth + 1, 0, 2);
             try printAst(ast, binary_add.right, depth + 1, 1, 2);
         },
-        else => {
-            try stderr.print("node: .{s}:\n", .{@tagName(node_tag)});
+        .expression_binary_mul => {
+            const binary_mul = ast.dataFromNode(node, .expression_binary_mul);
+
+            std.debug.assert(binary_mul.left.index != node.index);
+            std.debug.assert(binary_mul.right.index != node.index);
+
+            try stderr.print("expression_binary_mul:\n", .{});
+
+            try printAst(ast, binary_mul.left, depth + 1, 0, 2);
+            try printAst(ast, binary_mul.right, depth + 1, 1, 2);
         },
+        .expression_literal_number => {
+            const literal_number = ast.dataFromNode(node, .expression_literal_number);
+
+            try stderr.print("expression_literal_number: {s}\n", .{ast.tokenString(literal_number.token)});
+        },
+        .expression_identifier => {
+            const identifier = ast.dataFromNode(node, .expression_identifier);
+
+            try stderr.print("expression_identifier: {s}\n", .{ast.tokenString(identifier.token)});
+        },
+        // else => {
+        // try stderr.print("node: .{s}:\n", .{@tagName(node_tag)});
+        // },
     }
 }
 
