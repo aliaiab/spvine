@@ -304,7 +304,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
             const variable_name = try self.expectToken(.identifier);
 
             if (self.eatToken(.equals) != null) {
-                const expression = try self.parseExpression();
+                const expression = try self.parseExpression(.{});
 
                 try self.nodeSetData(&node, .statement_var_init, .{
                     .type_expr = type_expr,
@@ -332,7 +332,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
                     var node = try self.reserveNode(.statement_assign_equal);
                     errdefer self.unreserveNode(node);
 
-                    const expression = try self.parseExpression();
+                    const expression = try self.parseExpression(.{});
 
                     try self.nodeSetData(&node, .statement_assign_equal, .{
                         .identifier = variable_name,
@@ -348,7 +348,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
                     var node = try self.reserveNode(.statement_assign_add);
                     errdefer self.unreserveNode(node);
 
-                    const expression = try self.parseExpression();
+                    const expression = try self.parseExpression(.{});
 
                     try self.nodeSetData(&node, .statement_assign_add, .{
                         .identifier = variable_name,
@@ -367,7 +367,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
             var node = try self.reserveNode(.statement_if);
             errdefer self.unreserveNode(node);
 
-            const cond_expr = try self.parseExpression();
+            const cond_expr = try self.parseExpression(.{});
 
             const taken_statment = try self.parseStatement();
 
@@ -397,7 +397,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
             var expression: Ast.NodeIndex = Ast.NodeIndex.nil;
 
             if (self.peekTokenTag().? != .semicolon) {
-                expression = try self.parseExpression();
+                expression = try self.parseExpression(.{});
             }
 
             _ = try self.expectToken(.semicolon);
@@ -420,35 +420,48 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
 
 pub fn parseExpression(
     self: *Parser,
+    context: struct {
+        min_precedence: i32 = std.math.minInt(i32),
+        left: Ast.NodeIndex = Ast.NodeIndex.nil,
+    },
 ) anyerror!Ast.NodeIndex {
-    var lhs = Ast.NodeIndex.nil;
-    var rhs = Ast.NodeIndex.nil;
+    var lhs = context.left;
+
+    const precedence = struct {
+        pub inline fn get(token_tag: Token.Tag) i32 {
+            return switch (token_tag) {
+                .asterisk => 2,
+                .plus => 1,
+                else => 0,
+            };
+        }
+    };
 
     while (true) {
-        var node = try self.reserveNode(.expression_literal_number);
-        errdefer self.unreserveNode(node);
+        var node = Ast.NodeIndex.nil;
+        errdefer if (!node.isNil()) self.unreserveNode(node);
 
         switch (self.peekTokenTag().?) {
             .literal_number,
             .keyword_true,
             .keyword_false,
             => {
+                node = try self.reserveNode(.expression_literal_number);
+
                 const literal = self.nextToken().?;
 
                 try self.nodeSetData(&node, .expression_literal_number, .{
                     .token = literal,
                 });
-
-                lhs = node;
             },
             .identifier => {
+                node = try self.reserveNode(.expression_literal_number);
+
                 const identifier = try self.expectToken(.identifier);
 
                 try self.nodeSetData(&node, .expression_identifier, .{
                     .token = identifier,
                 });
-
-                lhs = node;
             },
             .left_paren => {
                 const open_paren = self.eatToken(.left_paren);
@@ -456,46 +469,58 @@ pub fn parseExpression(
                     _ = self.eatToken(.right_paren);
                 };
 
-                const sub_node = try self.parseExpression();
-
-                lhs = sub_node;
+                node = try self.parseExpression(.{});
             },
             .plus => {
-                _ = self.nextToken();
+                const prec = precedence.get(.plus);
 
-                rhs = try self.parseExpression();
+                if (prec <= context.min_precedence) {
+                    break;
+                } else {
+                    _ = self.nextToken();
 
-                const old_lhs = lhs;
+                    const rhs = try self.parseExpression(.{
+                        .min_precedence = prec,
+                    });
 
-                lhs = try self.reserveNode(.expression_binary_add);
+                    var sub_node = try self.reserveNode(.expression_binary_add);
 
-                try self.nodeSetData(&lhs, .expression_binary_add, .{
-                    .left = old_lhs,
-                    .right = rhs,
-                });
+                    try self.nodeSetData(&sub_node, .expression_binary_add, .{
+                        .left = lhs,
+                        .right = rhs,
+                    });
+
+                    node = sub_node;
+                }
             },
             .asterisk => {
-                _ = self.nextToken();
+                const prec = precedence.get(.asterisk);
 
-                rhs = try self.parseExpression();
+                if (prec <= context.min_precedence) {
+                    break;
+                } else {
+                    _ = self.nextToken();
 
-                const old_lhs = lhs;
+                    const rhs = try self.parseExpression(.{
+                        .min_precedence = prec,
+                    });
 
-                lhs = try self.reserveNode(.expression_binary_mul);
+                    var sub_node = try self.reserveNode(.expression_binary_mul);
 
-                try self.nodeSetData(&lhs, .expression_binary_mul, .{
-                    .left = old_lhs,
-                    .right = rhs,
-                });
+                    try self.nodeSetData(&sub_node, .expression_binary_mul, .{
+                        .left = lhs,
+                        .right = rhs,
+                    });
+
+                    node = sub_node;
+                }
             },
             else => {
-                if (!lhs.isNil()) {
-                    return lhs;
-                }
-
-                return self.unexpectedToken();
+                break;
             },
         }
+
+        lhs = node;
     }
 
     return lhs;
