@@ -119,7 +119,7 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
 
                 const error_message = error_message_to_eof[0..std.mem.indexOfScalar(u8, error_message_to_eof, '\n').?];
 
-                stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error{s}:" ++ terminal_bold ++ "{s}\n" ++ color_end, .{
+                stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ "{s}\n" ++ color_end, .{
                     file_path,
                     loc.line,
                     loc.column,
@@ -129,7 +129,7 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
                 }) catch {};
             },
             .unsupported_directive => {
-                stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error{s}: " ++ terminal_bold ++ "unsupported directive '{s}'" ++ "\n" ++ color_end, .{
+                stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s} " ++ terminal_bold ++ "unsupported directive '{s}'" ++ "\n" ++ color_end, .{
                     file_path,
                     loc.line,
                     loc.column,
@@ -140,7 +140,7 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
             },
             .expected_token => {
                 if (is_same_line) {
-                    stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error{s}:" ++ terminal_bold ++ " expected '{s}', found '{s}'\n" ++ color_end, .{
+                    stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " expected '{s}', found '{s}'\n" ++ color_end, .{
                         file_path,
                         loc.line,
                         loc.column,
@@ -150,7 +150,7 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
                         found_token.lexeme() orelse @tagName(found_token),
                     }) catch {};
                 } else {
-                    stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error{s}:" ++ terminal_bold ++ " expected '{s}'\n" ++ color_end, .{
+                    stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " expected '{s}'\n" ++ color_end, .{
                         file_path,
                         loc.line,
                         loc.column,
@@ -161,7 +161,7 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
                 }
             },
             .unexpected_token => {
-                stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error{s}:" ++ terminal_bold ++ " unexpected '{s}'\n" ++ color_end, .{
+                stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " unexpected '{s}'\n" ++ color_end, .{
                     file_path,
                     loc.line,
                     loc.column,
@@ -172,39 +172,51 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
             },
         }
 
-        const source_line = ast.source[loc.line_start .. loc.line_end + 1];
+        var tokenizer = Tokenizer.init(ast.source[0 .. loc.line_end + 1]);
 
-        var tokenizer = Tokenizer.init(ast.source[loc.line_start .. loc.line_end + 1]);
+        tokenizer.index = loc.line_start;
 
         var last_token: ?Tokenizer.Token = null;
+
+        const erroring_token_start = ast.tokens.items(.start)[error_value.token];
 
         while (tokenizer.next()) |token| {
             if (last_token != null) {
                 if (last_token.?.end != token.start) {
-                    _ = stderr.write(source_line[last_token.?.end..token.start]) catch unreachable;
+                    _ = stderr.write(ast.source[last_token.?.end..token.start]) catch unreachable;
                 }
             } else {
-                for (source_line[0..token.start]) |char| {
+                for (ast.source[loc.line_start..token.start]) |char| {
                     if (char != ' ') continue;
 
                     _ = stderr.writeByte(char) catch unreachable;
                 }
             }
 
-            try printAstToken(stderr, ast, source_line, token);
+            if (token.start == erroring_token_start) {
+                _ = stderr.write(terminal_red) catch unreachable;
+            }
+            defer if (token.start == erroring_token_start) {
+                _ = stderr.write(color_end) catch unreachable;
+            };
+
+            try printAstToken(
+                stderr,
+                ast,
+                token,
+                token.start == erroring_token_start,
+            );
 
             last_token = token;
         }
 
-        if (last_token != null and last_token.?.end != source_line.len) {
+        if (last_token != null and last_token.?.end != loc.line_end and last_token.?.tag != .directive_end) {
             _ = stderr.write(terminal_green) catch unreachable;
-            _ = stderr.write(source_line[last_token.?.end..]) catch unreachable;
+            _ = stderr.write(ast.source[last_token.?.end..loc.line_end]) catch unreachable;
             _ = stderr.write(color_end) catch unreachable;
         }
 
-        if (source_line[source_line.len - 1] != '\n') {
-            _ = stderr.write("\n") catch unreachable;
-        }
+        _ = stderr.write("\n") catch unreachable;
 
         stderr.print(terminal_green, .{}) catch {};
 
@@ -216,11 +228,13 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
             stderr.print("~", .{}) catch {};
         }
 
+        stderr.print(terminal_red, .{}) catch {};
         stderr.print("{s}\n", .{
             "^",
         }) catch {};
 
         stderr.print(color_end, .{}) catch {};
+
         stderr.print("\n", .{}) catch {};
     }
 }
@@ -228,8 +242,8 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
 fn printAstToken(
     writer: anytype,
     ast: Ast,
-    source_line: []const u8,
     token: Tokenizer.Token,
+    is_erroring: bool,
 ) !void {
     const terminal_green = "\x1B[32m";
     const terminal_blue = "\x1B[34m";
@@ -237,6 +251,9 @@ fn printAstToken(
     const terminal_yellow = "\x1B[33m";
     const terminal_cyan = "\x1B[36m";
     const terminal_white = "\x1B[37m";
+
+    const terminal_bold = "\x1B[1;37m";
+    _ = terminal_bold; // autofix
     const color_end = "\x1B[0;39m";
 
     switch (token.tag) {
@@ -256,8 +273,12 @@ fn printAstToken(
         .directive_line,
         .directive_end,
         => {
-            writer.print(terminal_purple ++ "{s}" ++ color_end, .{
-                source_line[token.start..token.end],
+            if (!is_erroring) {
+                writer.print(terminal_purple, .{}) catch {};
+            }
+
+            writer.print("{s}" ++ color_end, .{
+                ast.source[token.start..token.end],
             }) catch {};
         },
         .keyword_layout,
@@ -289,9 +310,15 @@ fn printAstToken(
         .keyword_in,
         .keyword_out,
         .keyword_inout,
+        //TODO: maybe print reserved keywords using red to indicate their 'invalidness'?
+        .reserved_keyword,
         => {
-            writer.print(terminal_blue ++ "{s}" ++ color_end, .{
-                source_line[token.start..token.end],
+            if (!is_erroring) {
+                writer.print(terminal_blue, .{}) catch {};
+            }
+
+            writer.print("{s}" ++ color_end, .{
+                ast.source[token.start..token.end],
             }) catch {};
         },
         .keyword_return,
@@ -309,29 +336,45 @@ fn printAstToken(
         .left_paren,
         .right_paren,
         => {
-            writer.print(terminal_purple ++ "{s}" ++ color_end, .{
-                source_line[token.start..token.end],
+            if (!is_erroring) {
+                writer.print(terminal_purple, .{}) catch {};
+            }
+
+            writer.print("{s}" ++ color_end, .{
+                ast.source[token.start..token.end],
             }) catch {};
         },
         .left_brace,
         .right_brace,
         => {
-            writer.print(terminal_yellow ++ "{s}" ++ color_end, .{
-                source_line[token.start..token.end],
+            if (!is_erroring) {
+                writer.print(terminal_yellow, .{}) catch {};
+            }
+
+            writer.print("{s}" ++ color_end, .{
+                ast.source[token.start..token.end],
             }) catch {};
         },
         .literal_number => {
-            writer.print(terminal_green ++ "{s}" ++ color_end, .{
-                source_line[token.start..token.end],
+            if (!is_erroring) {
+                writer.print(terminal_green, .{}) catch {};
+            }
+
+            writer.print("{s}" ++ color_end, .{
+                ast.source[token.start..token.end],
             }) catch {};
         },
         .literal_string => {
-            writer.print(terminal_cyan ++ "{s}" ++ color_end, .{
-                source_line[token.start..token.end],
+            if (!is_erroring) {
+                writer.print(terminal_cyan, .{}) catch {};
+            }
+
+            writer.print("{s}" ++ color_end, .{
+                ast.source[token.start..token.end],
             }) catch {};
         },
         .identifier => {
-            const string = source_line[token.start..token.end];
+            const string = ast.source[token.start..token.end];
 
             if (ast.defines.get(string)) |define| {
                 const token_def_start = ast.tokens.items(.start)[define.start_token];
@@ -351,25 +394,37 @@ fn printAstToken(
                     .keyword_vec3,
                     .keyword_vec4,
                     => {
-                        writer.print(terminal_blue ++ "{s}" ++ color_end, .{
-                            source_line[token.start..token.end],
+                        if (!is_erroring) {
+                            writer.print(terminal_blue, .{}) catch {};
+                        }
+
+                        writer.print("{s}" ++ color_end, .{
+                            ast.source[token.start..token.end],
                         }) catch {};
                     },
                     else => {
-                        writer.print(terminal_white ++ "{s}" ++ color_end, .{
+                        if (!is_erroring) {
+                            writer.print(terminal_white, .{}) catch {};
+                        }
+
+                        writer.print("{s}" ++ color_end, .{
                             string,
                         }) catch {};
                     },
                 }
             } else {
-                writer.print(terminal_white ++ "{s}" ++ color_end, .{
+                if (!is_erroring) {
+                    writer.print(terminal_white, .{}) catch {};
+                }
+
+                writer.print("{s}" ++ color_end, .{
                     string,
                 }) catch {};
             }
         },
         else => {
             writer.print("{s}", .{
-                source_line[token.start..token.end],
+                ast.source[token.start..token.end],
             }) catch {};
         },
     }
@@ -434,7 +489,8 @@ fn printAst(
             const type_expr = node_data.type_expr;
             const param_identifier = node_data.name;
 
-            try stderr.print("param_expr: {s}\n", .{ast.tokenString(param_identifier)});
+            try stderr.print("param_expr: {s}, ", .{ast.tokenString(param_identifier)});
+            try stderr.print("qualifier: {?s}\n", .{node_data.qualifier.lexeme()});
 
             try printAst(ast, type_expr, depth + 1, 0, 1);
         },
@@ -518,6 +574,17 @@ fn printAst(
 
             try printAst(ast, binary_add.left, depth + 1, 0, 2);
             try printAst(ast, binary_add.right, depth + 1, 1, 2);
+        },
+        .expression_binary_eql => {
+            const binary = ast.dataFromNode(node, .expression_binary_eql);
+
+            std.debug.assert(binary.left.index != node.index);
+            std.debug.assert(binary.right.index != node.index);
+
+            try stderr.print("expression_binary_eql:\n", .{});
+
+            try printAst(ast, binary.left, depth + 1, 0, 2);
+            try printAst(ast, binary.right, depth + 1, 1, 2);
         },
         .expression_binary_mul => {
             const binary_mul = ast.dataFromNode(node, .expression_binary_mul);

@@ -11,9 +11,12 @@ state: enum {
     plus,
     minus,
     asterisk,
+    bang,
     equals,
     single_comment,
     multi_comment,
+    left_angled_bracket,
+    right_angled_bracket,
     literal_number,
     literal_string,
     directive_start,
@@ -80,6 +83,12 @@ pub fn next(self: *Tokenizer) ?Token {
                 '\\' => {
                     self.state = .backward_slash;
                 },
+                '<' => {
+                    self.state = .left_angled_bracket;
+                },
+                '>' => {
+                    self.state = .right_angled_bracket;
+                },
                 '{' => {
                     token.tag = .left_brace;
                     self.index += 1;
@@ -136,6 +145,9 @@ pub fn next(self: *Tokenizer) ?Token {
                 },
                 '*' => {
                     self.state = .asterisk;
+                },
+                '!' => {
+                    self.state = .bang;
                 },
                 '\"' => {
                     self.state = .literal_string;
@@ -225,6 +237,32 @@ pub fn next(self: *Tokenizer) ?Token {
                 },
                 else => {},
             },
+            .left_angled_bracket => switch (char) {
+                '=' => {
+                    token.tag = .less_than_equals;
+                    self.state = .start;
+                    self.index += 1;
+                    break;
+                },
+                else => {
+                    token.tag = .left_angled_bracket;
+                    self.state = .start;
+                    break;
+                },
+            },
+            .right_angled_bracket => switch (char) {
+                '=' => {
+                    token.tag = .greater_than_equals;
+                    self.state = .start;
+                    self.index += 1;
+                    break;
+                },
+                else => {
+                    token.tag = .right_angled_bracket;
+                    self.state = .start;
+                    break;
+                },
+            },
             .plus => switch (char) {
                 '+' => {
                     token.tag = .plus_plus;
@@ -272,6 +310,19 @@ pub fn next(self: *Tokenizer) ?Token {
                 },
                 else => {
                     token.tag = .asterisk;
+                    self.state = .start;
+                    break;
+                },
+            },
+            .bang => switch (char) {
+                '=' => {
+                    token.tag = .bang_equals;
+                    self.state = .start;
+                    self.index += 1;
+                    break;
+                },
+                else => {
+                    token.tag = .bang;
                     self.state = .start;
                     break;
                 },
@@ -438,11 +489,15 @@ pub const Token = struct {
         right_brace,
         left_bracket,
         right_bracket,
+        left_angled_bracket,
+        right_angled_bracket,
         left_paren,
         right_paren,
         semicolon,
         comma,
         period,
+        less_than_equals,
+        greater_than_equals,
         plus,
         plus_plus,
         plus_equals,
@@ -451,6 +506,8 @@ pub const Token = struct {
         minus_equals,
         equals,
         equals_equals,
+        bang,
+        bang_equals,
         asterisk,
         asterisk_equals,
         forward_slash,
@@ -533,11 +590,15 @@ pub const Token = struct {
                 .right_brace => "}",
                 .left_bracket => "[",
                 .right_bracket => "]",
+                .left_angled_bracket => "<",
+                .right_angled_bracket => ">",
                 .left_paren => "(",
                 .right_paren => ")",
                 .semicolon => ";",
                 .comma => ",",
                 .period => ".",
+                .less_than_equals => "<=",
+                .greater_than_equals => ">=",
                 .plus => "+",
                 .plus_plus => "++",
                 .plus_equals => "+=",
@@ -546,6 +607,8 @@ pub const Token = struct {
                 .minus_equals => "-=",
                 .equals => "=",
                 .equals_equals => "==",
+                .bang => "!",
+                .bang_equals => "!=",
                 .asterisk => "*",
                 .asterisk_equals => "*=",
                 .forward_slash => "/",
