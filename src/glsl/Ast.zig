@@ -151,15 +151,31 @@ pub const Node = struct {
         procedure_body,
         statement_list,
         statement_var_init,
-        statement_assign_equal,
-        statement_assign_add,
         statement_if,
         statement_return,
         expression_literal_number,
         expression_identifier,
+        expression_binary_assign,
+        expression_binary_assign_add,
+        expression_binary_assign_sub,
+        expression_binary_assign_mul,
+        expression_binary_assign_div,
         expression_binary_add,
+        expression_binary_sub,
         expression_binary_mul,
+        expression_binary_div,
+        ///Less than
+        expression_binary_lt,
+        ///Greater than
+        expression_binary_gt,
         expression_binary_eql,
+        expression_binary_neql,
+        ///Less than equal
+        expression_binary_leql,
+        ///Greater than equal
+        expression_binary_geql,
+        expression_binary_proc_call,
+        expression_binary_comma,
     };
 
     pub const ExtraData = union(Tag) {
@@ -194,14 +210,6 @@ pub const Node = struct {
             identifier: TokenIndex,
             expression: NodeIndex,
         },
-        statement_assign_equal: struct {
-            identifier: TokenIndex,
-            expression: NodeIndex,
-        },
-        statement_assign_add: struct {
-            identifier: TokenIndex,
-            expression: NodeIndex,
-        },
         statement_if: struct {
             condition_expression: NodeIndex,
             taken_statement: NodeIndex,
@@ -216,9 +224,27 @@ pub const Node = struct {
         expression_identifier: struct {
             token: TokenIndex,
         },
+        expression_binary_assign: BinaryExpression,
+        expression_binary_assign_add: BinaryExpression,
+        expression_binary_assign_sub: BinaryExpression,
+        expression_binary_assign_mul: BinaryExpression,
+        expression_binary_assign_div: BinaryExpression,
         expression_binary_add: BinaryExpression,
+        expression_binary_sub: BinaryExpression,
         expression_binary_mul: BinaryExpression,
+        expression_binary_div: BinaryExpression,
+        ///Less than
+        expression_binary_lt: BinaryExpression,
+        ///Greater than
+        expression_binary_gt: BinaryExpression,
         expression_binary_eql: BinaryExpression,
+        expression_binary_neql: BinaryExpression,
+        ///Less than equal
+        expression_binary_leql: BinaryExpression,
+        ///Greater than equal
+        expression_binary_geql: BinaryExpression,
+        expression_binary_proc_call: BinaryExpression,
+        expression_binary_comma: BinaryExpression,
 
         pub const BinaryExpression = struct {
             left: NodeIndex,

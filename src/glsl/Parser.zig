@@ -317,6 +317,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
         .keyword_float,
         .keyword_uint,
         .keyword_int,
+        .keyword_bool,
         .keyword_void,
         => {
             //allocate worst case
@@ -345,44 +346,19 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
 
             return node;
         },
-        .identifier => {
-            const variable_name = try self.expectToken(.identifier);
+        .identifier,
+        .literal_number,
+        => {
+            defer _ = self.eatToken(.semicolon);
 
-            switch (self.peekTokenTag().?) {
-                Token.Tag.equals => {
-                    _ = self.nextToken();
+            return self.parseExpression(.{});
+        },
+        .literal_string,
+        => {
+            //TODO: what to do with string literals
+            _ = self.nextToken();
 
-                    //allocate worst case
-                    var node = try self.reserveNode(.statement_assign_equal);
-                    errdefer self.unreserveNode(node);
-
-                    const expression = try self.parseExpression(.{});
-
-                    try self.nodeSetData(&node, .statement_assign_equal, .{
-                        .identifier = variable_name,
-                        .expression = expression,
-                    });
-
-                    return node;
-                },
-                Token.Tag.plus_equals => {
-                    _ = self.nextToken();
-
-                    //allocate worst case
-                    var node = try self.reserveNode(.statement_assign_add);
-                    errdefer self.unreserveNode(node);
-
-                    const expression = try self.parseExpression(.{});
-
-                    try self.nodeSetData(&node, .statement_assign_add, .{
-                        .identifier = variable_name,
-                        .expression = expression,
-                    });
-
-                    return node;
-                },
-                else => {},
-            }
+            return Ast.NodeIndex.nil;
         },
         .keyword_if => {
             _ = self.nextToken();
@@ -391,7 +367,11 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
             var node = try self.reserveNode(.statement_if);
             errdefer self.unreserveNode(node);
 
+            _ = try self.expectToken(.left_paren);
+
             const cond_expr = try self.parseExpression(.{});
+
+            _ = try self.expectToken(.right_paren);
 
             const taken_statment = try self.parseStatement();
 
@@ -484,26 +464,75 @@ pub fn parseExpression(
                 };
 
                 node = try self.parseExpression(.{});
+
+                if (lhs.tag == .expression_identifier) {
+                    var sub_node = try self.reserveNode(.expression_binary_proc_call);
+
+                    try self.nodeSetData(&sub_node, .expression_binary_proc_call, .{
+                        .left = lhs,
+                        .right = node,
+                    });
+
+                    node = sub_node;
+                }
             },
             inline else => |tag| {
                 const operators = struct {
                     pub inline fn getPrecedence(comptime node_tag: Ast.Node.Tag) i32 {
                         return switch (node_tag) {
-                            .expression_binary_mul => 2,
-                            .expression_binary_add => 1,
-                            .expression_binary_eql => 0,
+                            .expression_binary_mul,
+                            .expression_binary_div,
+                            => 6,
+                            .expression_binary_add,
+                            .expression_binary_sub,
+                            => 5,
+                            .expression_binary_eql,
+                            .expression_binary_neql,
+                            => 4,
+                            .expression_binary_lt,
+                            .expression_binary_gt,
+                            .expression_binary_leql,
+                            .expression_binary_geql,
+                            => 3,
+                            .expression_binary_assign,
+                            .expression_binary_assign_add,
+                            .expression_binary_assign_sub,
+                            .expression_binary_assign_mul,
+                            .expression_binary_assign_div,
+                            => 2,
+                            .expression_binary_comma => 1,
                             else => 0,
                         };
                     }
 
                     pub inline fn getNodeType(comptime token_tag: Token.Tag) ?Ast.Node.Tag {
                         return switch (token_tag) {
+                            .equals => .expression_binary_assign,
+                            .plus_equals => .expression_binary_assign_add,
+                            .minus_equals => .expression_binary_assign_sub,
+                            .asterisk_equals => .expression_binary_assign_mul,
+                            .forward_slash_equals => .expression_binary_assign_div,
                             .plus => .expression_binary_add,
+                            .minus => .expression_binary_sub,
                             .asterisk => .expression_binary_mul,
+                            .forward_slash => .expression_binary_div,
                             .equals_equals => .expression_binary_eql,
+                            .bang_equals => .expression_binary_neql,
+                            .left_angled_bracket => .expression_binary_lt,
+                            .right_angled_bracket => .expression_binary_gt,
+                            .less_than_equals => .expression_binary_leql,
+                            .greater_than_equals => .expression_binary_geql,
+                            .comma => .expression_binary_comma,
                             else => null,
                         };
                     }
+                };
+
+                defer switch (tag) {
+                    .left_bracket => {
+                        _ = self.eatToken(.right_bracket);
+                    },
+                    else => {},
                 };
 
                 if (operators.getNodeType(tag)) |binary_node_type| {
@@ -549,6 +578,7 @@ pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
         .keyword_vec2,
         .keyword_vec3,
         .keyword_vec4,
+        .keyword_bool,
         => {
             var node = try self.reserveNode(.type_expr);
             errdefer self.unreserveNode(node);
