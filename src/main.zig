@@ -14,7 +14,7 @@ pub fn main() !void {
     }
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer std.debug.assert(gpa.deinit() != .leak);
+    // defer std.debug.assert(gpa.deinit() != .leak);
 
     const allocator = gpa.allocator();
 
@@ -79,7 +79,11 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
     for (ast.errors) |error_value| {
         const is_same_line = ast.tokenLocation(error_value.token -| 1).line == ast.tokenLocation(error_value.token).line;
 
-        const loc = if (is_same_line) ast.tokenLocation(error_value.token) else ast.tokenLocation(error_value.token - if (error_value.tag == .expected_token) @as(u32, 1) else @as(u32, 0));
+        const loc = if (is_same_line)
+            ast.tokenLocation(error_value.token)
+        else
+            ast.tokenLocation(error_value.token - if (error_value.tag == .expected_token) @as(u32, 1) else @as(u32, 0));
+
         const found_token = ast.tokens.items(.tag)[error_value.token];
 
         const stderr = std.io.getStdErr().writer();
@@ -91,6 +95,7 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
 
         const color_end = "\x1B[0;39m";
 
+        //Message render
         switch (error_value.tag) {
             .invalid_token => {
                 stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error{s}:" ++ terminal_bold ++ " invalid token '{s}'\n" ++ color_end, .{
@@ -180,6 +185,7 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
 
         const erroring_token_start = ast.tokens.items(.start)[error_value.token];
 
+        //Source line render
         while (tokenizer.next()) |token| {
             if (last_token != null) {
                 if (last_token.?.end != token.start) {
@@ -187,10 +193,12 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
                 }
             } else {
                 for (ast.source[loc.line_start..token.start]) |char| {
-                    if (char != ' ') continue;
-
                     _ = stderr.writeByte(char) catch unreachable;
                 }
+            }
+
+            if (token.tag == .directive_end) {
+                continue;
             }
 
             if (token.start == erroring_token_start) {

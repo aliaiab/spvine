@@ -255,6 +255,8 @@ pub fn parseParam(self: *Parser) !Ast.NodeIndex {
 
     var qualifier: Token.Tag = .keyword_in;
 
+    const first_in_qualifier = self.eatToken(.keyword_in);
+
     switch (self.peekTokenTag().?) {
         .keyword_inout,
         .keyword_out,
@@ -266,6 +268,10 @@ pub fn parseParam(self: *Parser) !Ast.NodeIndex {
             _ = self.nextToken();
         },
         else => {},
+    }
+
+    if (first_in_qualifier == null) {
+        _ = self.eatToken(.keyword_in);
     }
 
     const type_expr = try self.parseTypeExpr();
