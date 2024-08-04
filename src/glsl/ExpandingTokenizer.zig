@@ -70,17 +70,26 @@ pub fn tokenize(
 
                 if (!if_condition) continue;
 
-                const identifier_token = self.tokenizer.next() orelse break;
+                const if_expr_token = self.tokenizer.next() orelse break;
 
-                const string = self.tokenizer.source[identifier_token.start..identifier_token.end];
+                switch (if_expr_token.tag) {
+                    .identifier => {
+                        const string = self.tokenizer.source[if_expr_token.start..if_expr_token.end];
 
-                const define = self.defines.get(string) orelse return error.UndefinedMacro;
+                        const define = self.defines.get(string) orelse return error.UndefinedMacro;
 
-                const value_token = tokens.get(define.start_token);
+                        const value_token = tokens.get(define.start_token);
 
-                const value = try std.fmt.parseUnsigned(u64, self.tokenizer.source[value_token.start..value_token.end], 10);
+                        const value = try std.fmt.parseUnsigned(u64, self.tokenizer.source[value_token.start..value_token.end], 10);
+                        if_condition = value != 0;
+                    },
+                    .literal_number => {
+                        const value = try std.fmt.parseUnsigned(u64, self.tokenizer.source[if_expr_token.start..if_expr_token.end], 10);
+                        if_condition = value != 0;
+                    },
+                    else => {},
+                }
 
-                if_condition = value == 1;
                 if_condition_level += 1;
             },
             .directive_ifdef => {
@@ -160,6 +169,8 @@ pub fn tokenize(
                 }
             },
             .directive_line, .directive_include => {
+                if (!if_condition) continue;
+
                 try errors.append(self.allocator, .{
                     .tag = .unsupported_directive,
                     .token = @intCast(tokens.len),

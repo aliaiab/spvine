@@ -450,6 +450,7 @@ pub const Token = struct {
 
         keyword_flat,
         keyword_smooth,
+        keyword_precise,
 
         keyword_struct,
 
@@ -585,6 +586,7 @@ pub const Token = struct {
                 .keyword_in => "in",
                 .keyword_out => "out",
                 .keyword_inout => "inout",
+                .keyword_precise => "precise",
 
                 .left_brace => "{",
                 .right_brace => "}",
@@ -644,6 +646,7 @@ pub const Token = struct {
         .{ "const", .keyword_const },
         .{ "flat", .keyword_flat },
         .{ "smooth", .keyword_smooth },
+        .{ "precise", .keyword_precise },
         .{ "struct", .keyword_struct },
         .{ "void", .keyword_void },
         .{ "int", .keyword_int },
