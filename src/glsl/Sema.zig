@@ -56,7 +56,10 @@ pub const Type = struct {
 pub const TypeIndex = u32;
 
 ///Analyse the root node of the ast
-pub fn analyse(ast: Ast, allocator: std.mem.Allocator) !struct { spirv.Air, []Error } {
+pub fn analyse(ast: Ast, allocator: std.mem.Allocator) !struct {
+    spirv.Air,
+    []Error,
+} {
     const root_decls = ast.root_decls;
 
     var sema: Sema = .{

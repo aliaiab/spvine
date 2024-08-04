@@ -14,8 +14,10 @@ pub fn build(builder: *std.Build) void {
         .optimize = optimize,
     });
 
-    exe.use_llvm = true;
-    exe.use_lld = true;
+    const use_llvm = false;
+
+    exe.use_llvm = use_llvm;
+    exe.use_lld = use_llvm;
 
     builder.installArtifact(exe);
 

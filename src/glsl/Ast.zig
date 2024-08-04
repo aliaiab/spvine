@@ -159,6 +159,7 @@ pub const Node = struct {
         expression_identifier,
         expression_binary_add,
         expression_binary_mul,
+        expression_binary_eql,
     };
 
     pub const ExtraData = union(Tag) {
@@ -180,6 +181,7 @@ pub const Node = struct {
         param_expr: struct {
             type_expr: NodeIndex,
             name: TokenIndex,
+            qualifier: Token.Tag,
         },
         procedure_body: struct {
             statements: []const NodeIndex,
@@ -214,14 +216,14 @@ pub const Node = struct {
         expression_identifier: struct {
             token: TokenIndex,
         },
-        expression_binary_add: struct {
+        expression_binary_add: BinaryExpression,
+        expression_binary_mul: BinaryExpression,
+        expression_binary_eql: BinaryExpression,
+
+        pub const BinaryExpression = struct {
             left: NodeIndex,
             right: NodeIndex,
-        },
-        expression_binary_mul: struct {
-            left: NodeIndex,
-            right: NodeIndex,
-        },
+        };
     };
 };
 
