@@ -128,13 +128,27 @@ pub const Error = struct {
 
 pub const TokenList = std.MultiArrayList(Token);
 
+//TODO: make this a packed struct for type safety?
 pub const TokenIndex = u32;
+
+///Represents a unique handle to a type which will be populated during semantic analysis
+pub const TypeIndex = packed struct(u32) {
+    index: u32,
+
+    pub const nil = TypeIndex{
+        .index = 0,
+    };
+
+    pub fn isNil(self: TypeIndex) bool {
+        return self.index == nil.index;
+    }
+};
 
 pub const NodeIndex = packed struct(u32) {
     tag: Node.Tag,
     index: IndexInt,
 
-    pub const IndexInt = u24;
+    pub const IndexInt = std.meta.Int(.unsigned, @bitSizeOf(u32) - @bitSizeOf(Node.Tag));
 
     pub const nil: NodeIndex = .{
         //This is undefined so we don't have to waste a bit on the nil node in Node.Tag
@@ -148,7 +162,7 @@ pub const NodeIndex = packed struct(u32) {
 };
 
 pub const Node = struct {
-    pub const Tag = enum(u8) {
+    pub const Tag = enum(u5) {
         type_expr,
         procedure,
         param_list,
@@ -183,7 +197,7 @@ pub const Node = struct {
         expression_binary_comma,
     };
 
-    pub const ExtraData = union(Tag) {
+    pub const Data = union(Tag) {
         type_expr: struct {
             token: TokenIndex,
         },
@@ -272,7 +286,7 @@ pub const NodeHeap = struct {
         allocator: std.mem.Allocator,
         comptime tag: Node.Tag,
     ) !NodeIndex.IndexInt {
-        const NodeType = std.meta.TagPayload(Node.ExtraData, tag);
+        const NodeType = std.meta.TagPayload(Node.Data, tag);
 
         const node_index = try self.allocBytes(allocator, @alignOf(NodeType), @sizeOf(NodeType));
 
@@ -352,7 +366,7 @@ pub const NodeHeap = struct {
     pub fn initializeNode(
         self: *NodeHeap,
         comptime node_tag: Node.Tag,
-        node_payload: std.meta.TagPayload(Node.ExtraData, node_tag),
+        node_payload: std.meta.TagPayload(Node.Data, node_tag),
         node_index: u24,
     ) void {
         self.getNodePtr(node_tag, node_index).* = node_payload;
@@ -361,9 +375,9 @@ pub const NodeHeap = struct {
     pub fn getNodePtr(
         self: NodeHeap,
         comptime node_tag: Node.Tag,
-        node_index: u24,
-    ) *std.meta.TagPayload(Node.ExtraData, node_tag) {
-        const Payload = std.meta.TagPayload(Node.ExtraData, node_tag);
+        node_index: NodeIndex.IndexInt,
+    ) *std.meta.TagPayload(Node.Data, node_tag) {
+        const Payload = std.meta.TagPayload(Node.Data, node_tag);
 
         std.debug.assert(node_index < self.allocated_size);
 
@@ -387,8 +401,8 @@ pub const NodeHeap = struct {
     pub fn getNodePtrConst(
         self: NodeHeap,
         comptime node_tag: Node.Tag,
-        node_index: u24,
-    ) *const std.meta.TagPayload(Node.ExtraData, node_tag) {
+        node_index: NodeIndex.IndexInt,
+    ) *const std.meta.TagPayload(Node.Data, node_tag) {
         return self.getNodePtr(node_tag, node_index);
     }
 
@@ -398,7 +412,7 @@ pub const NodeHeap = struct {
 
         switch (node.tag) {
             inline else => |tag| {
-                payload_size = @sizeOf(std.meta.TagPayload(Node.ExtraData, tag));
+                payload_size = @sizeOf(std.meta.TagPayload(Node.Data, tag));
             },
         }
 
@@ -408,7 +422,7 @@ pub const NodeHeap = struct {
     }
 };
 
-pub fn dataFromNode(ast: Ast, node: NodeIndex, comptime tag: Node.Tag) std.meta.TagPayload(Node.ExtraData, tag) {
+pub fn dataFromNode(ast: Ast, node: NodeIndex, comptime tag: Node.Tag) std.meta.TagPayload(Node.Data, tag) {
     return ast.node_heap.getNodePtrConst(tag, node.index).*;
 }
 
