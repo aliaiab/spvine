@@ -27,7 +27,7 @@ pub fn main() !void {
     const test_glsl = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
     defer allocator.free(test_glsl);
 
-    var ast = try Ast.parse(allocator, test_glsl);
+    var ast = try Ast.parse(allocator, test_glsl, test_glsl_path);
     defer ast.deinit(allocator);
 
     var defines = ast.defines.valueIterator();
@@ -50,8 +50,18 @@ pub fn main() !void {
     {
         std.debug.print("\nglsl.Ast:\n", .{});
 
+        var terminated_levels = std.ArrayList(u8).init(allocator);
+        defer terminated_levels.deinit();
+
         for (ast.root_decls, 0..) |root_decl, decl_index| {
-            try printAst(ast, root_decl, 0, decl_index, ast.root_decls.len);
+            try printAst(
+                ast,
+                &terminated_levels,
+                root_decl,
+                0,
+                decl_index,
+                ast.root_decls.len,
+            );
         }
 
         std.debug.print("\n", .{});
@@ -440,6 +450,7 @@ fn printAstToken(
 
 fn printAst(
     ast: Ast,
+    terminated_levels: *std.ArrayList(u8),
     node: Ast.NodeIndex,
     depth: u32,
     sibling_index: usize,
@@ -451,7 +462,17 @@ fn printAst(
         return;
     }
 
-    //TODO: if these are empty, surely they should just be Ast.NodeIndex.nil?
+    const termination_index = terminated_levels.items.len;
+    const is_terminator = sibling_index == sibling_count - 1;
+
+    if (is_terminator) {
+        try terminated_levels.append(@intCast(depth));
+    }
+
+    defer if (is_terminator) {
+        terminated_levels.items[termination_index] = 255;
+    };
+
     switch (node_tag) {
         .param_list => {
             const list = ast.dataFromNode(node, .param_list);
@@ -472,149 +493,143 @@ fn printAst(
 
     const stderr = std.io.getStdErr().writer();
 
-    for (0..depth) |_| {
-        try stderr.print("  ", .{});
+    for (0..depth) |level| {
+        const is_terminated: bool = blk: {
+            for (terminated_levels.items) |terminated_depth| {
+                if (terminated_depth == level) {
+                    break :blk true;
+                }
+            }
+
+            break :blk false;
+        };
+
+        if (is_terminated) {
+            try stderr.print("  ", .{});
+        } else {
+            try stderr.print("{s} ", .{"│"});
+        }
     }
 
-    const connecting_string = if (sibling_index == sibling_count - 1) "└" else "├";
-
-    const is_leaf = switch (node_tag) {
-        .type_expr,
-        .expression_literal_number,
-        .expression_literal_boolean,
-        .expression_identifier,
-        => true,
-        else => false,
-    };
-
-    try stderr.print("{s}", .{connecting_string});
-    try stderr.print("{s}", .{if (is_leaf) "──" else "─┬"});
-
     switch (node_tag) {
-        .procedure => {
-            const proc = ast.dataFromNode(node, .procedure);
-
-            try stderr.print("procedure: {s}\n", .{ast.tokenString(proc.name)});
-
-            try printAst(ast, proc.return_type, depth + 1, 0, 3);
-            try printAst(ast, proc.param_list, depth + 1, 1, 3);
-            try printAst(ast, proc.body, depth + 1, 2, 3);
-        },
-        .type_expr => {
-            const type_expr = ast.dataFromNode(node, .type_expr);
-
-            try stderr.print("type_expr: {s}\n", .{ast.tokenString(type_expr.token)});
-        },
-        .param_expr => {
-            const node_data = ast.dataFromNode(node, .param_expr);
-
-            const type_expr = node_data.type_expr;
-            const param_identifier = node_data.name;
-
-            try stderr.print("param_expr: {s}, ", .{ast.tokenString(param_identifier)});
-            try stderr.print("qualifier: {?s}\n", .{node_data.qualifier.lexeme()});
-
-            try printAst(ast, type_expr, depth + 1, 0, 1);
-        },
-        .param_list => {
-            const list = ast.dataFromNode(node, .param_list);
-
-            try stderr.print("param_list:\n", .{});
-
-            for (list.params, 0..) |param_expr, child_index| {
-                try printAst(
-                    ast,
-                    param_expr,
-                    depth + 1,
-                    child_index,
-                    list.params.len,
-                );
-            }
-        },
-        .statement_block => {
-            const list = ast.dataFromNode(node, .statement_block);
-
-            try stderr.print("statement_block:\n", .{});
-
-            for (list.statements, 0..) |statement, statement_index| {
-                try printAst(
-                    ast,
-                    statement,
-                    depth + 1,
-                    statement_index,
-                    list.statements.len,
-                );
-            }
-        },
-        .statement_var_init => {
-            const var_init = ast.dataFromNode(node, .statement_var_init);
-
-            try stderr.print("statement_var_init: {s}\n", .{ast.tokenString(var_init.identifier)});
-
-            try printAst(ast, var_init.type_expr, depth + 1, 0, 2);
-            try printAst(ast, var_init.expression, depth + 1, 1, 2);
-        },
-        .statement_if => {
-            const if_statement = ast.dataFromNode(node, .statement_if);
-
-            try stderr.print("statement_if: \n", .{});
-
-            try printAst(ast, if_statement.condition_expression, depth + 1, 0, 3);
-            try printAst(ast, if_statement.taken_statement, depth + 1, 1, 3);
-            try printAst(ast, if_statement.not_taken_statement, depth + 1, 2, 3);
-        },
-        .statement_return => {
-            const return_statement = ast.dataFromNode(node, .statement_return);
-            try stderr.print("statement_return:\n", .{});
-
-            try printAst(ast, return_statement.expression, depth + 1, 0, 1);
-        },
-        .expression_literal_number => {
-            const literal_number = ast.dataFromNode(node, .expression_literal_number);
-
-            try stderr.print("expression_literal_number: {s}\n", .{ast.tokenString(literal_number.token)});
-        },
-        .expression_literal_boolean => {
-            const literal_bool = ast.dataFromNode(node, .expression_literal_boolean);
-
-            try stderr.print("expression_literal_boolean: {s}\n", .{ast.tokenString(literal_bool.token)});
-        },
-        .expression_identifier => {
-            const identifier = ast.dataFromNode(node, .expression_identifier);
-
-            try stderr.print("expression_identifier: {s}\n", .{ast.tokenString(identifier.token)});
-        },
         inline else => |tag| {
             switch (tag) {
-                .expression_binary_assign,
-                .expression_binary_assign_add,
-                .expression_binary_assign_sub,
-                .expression_binary_assign_mul,
-                .expression_binary_assign_div,
-                .expression_binary_add,
-                .expression_binary_sub,
-                .expression_binary_mul,
-                .expression_binary_div,
-                .expression_binary_lt,
-                .expression_binary_gt,
-                .expression_binary_eql,
-                .expression_binary_neql,
-                .expression_binary_leql,
-                .expression_binary_geql,
-                .expression_binary_proc_call,
-                .expression_binary_comma,
-                => {
-                    const binary = ast.dataFromNode(node, tag);
+                else => {
+                    @setEvalBranchQuota(100000);
 
-                    std.debug.assert(binary.left.index != node.index);
-                    std.debug.assert(binary.right.index != node.index);
+                    //TODO: this might make compile times bad
+                    const is_leaf: bool = blk: {
+                        inline for (std.meta.fields(std.meta.TagPayload(Ast.Node.ExtraData, tag))) |field| {
+                            switch (field.type) {
+                                Ast.NodeIndex,
+                                []const Ast.NodeIndex,
+                                => {
+                                    comptime break :blk false;
+                                },
+                                else => {},
+                            }
+                        }
 
-                    try stderr.print("{s}:\n", .{@tagName(tag)});
+                        break :blk true;
+                    };
 
-                    try printAst(ast, binary.left, depth + 1, 0, 2);
-                    try printAst(ast, binary.right, depth + 1, 1, 2);
+                    const connecting_string = if (is_terminator) "└" else "├";
+
+                    try stderr.print("{s}", .{connecting_string});
+                    try stderr.print("{s}", .{if (is_leaf) "──" else "─┬"});
+
+                    const node_data = ast.dataFromNode(node, tag);
+
+                    var sub_sibling_count: usize = 0;
+
+                    inline for (std.meta.fields(@TypeOf(node_data))) |payload_field| {
+                        switch (payload_field.type) {
+                            Ast.NodeIndex => {
+                                sub_sibling_count += @intFromBool(!@field(node_data, payload_field.name).isNil());
+                            },
+                            Ast.TokenIndex,
+                            Tokenizer.Token.Tag,
+                            => {},
+                            []const Ast.NodeIndex => {
+                                sub_sibling_count += @intCast(@field(node_data, payload_field.name).len);
+                            },
+                            else => {
+                                @compileError("Node data type not supported");
+                            },
+                        }
+                    }
+
+                    try stderr.print("{s}: ", .{@tagName(tag)});
+
+                    inline for (std.meta.fields(@TypeOf(node_data)), 0..) |payload_field, field_index| {
+                        const field_value = @field(node_data, payload_field.name);
+
+                        switch (payload_field.type) {
+                            Ast.TokenIndex => {
+                                try stderr.print(payload_field.name ++ ": " ++ "{s}", .{ast.tokenString(field_value)});
+                                const token_location = ast.tokenLocation(field_value);
+
+                                try stderr.print("({s}:{}:{}:)", .{ token_location.source_name, token_location.line, token_location.column });
+                            },
+                            Tokenizer.Token.Tag => {
+                                try stderr.print(payload_field.name ++ ": " ++ "{s}", .{@tagName(field_value)});
+                            },
+                            else => {},
+                        }
+
+                        switch (payload_field.type) {
+                            Ast.TokenIndex,
+                            Tokenizer.Token.Tag,
+                            => {
+                                if (field_index != std.meta.fields(@TypeOf(node_data)).len - 1) {
+                                    try stderr.print(", ", .{});
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+
+                    try stderr.print("\n", .{});
+
+                    var sub_sibling_index: usize = 0;
+
+                    inline for (std.meta.fields(@TypeOf(node_data))) |payload_field| {
+                        const field_value = @field(node_data, payload_field.name);
+
+                        switch (payload_field.type) {
+                            Ast.NodeIndex => {
+                                if (!field_value.isNil()) {
+                                    try printAst(
+                                        ast,
+                                        terminated_levels,
+                                        field_value,
+                                        depth + 1,
+                                        sub_sibling_index,
+                                        sub_sibling_count,
+                                    );
+                                    sub_sibling_index += 1;
+                                }
+                            },
+                            []const Ast.NodeIndex => {
+                                for (field_value, 0..) |sub_node, array_sibling_index| {
+                                    try printAst(
+                                        ast,
+                                        terminated_levels,
+                                        sub_node,
+                                        depth + 1,
+                                        array_sibling_index,
+                                        field_value.len,
+                                    );
+                                }
+
+                                if (field_value.len != 0) {
+                                    sub_sibling_index += 1;
+                                }
+                            },
+                            else => {},
+                        }
+                    }
                 },
-                else => {},
             }
         },
     }
