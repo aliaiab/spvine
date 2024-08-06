@@ -62,8 +62,10 @@ u32 vertex_main(u32 z, u32 w, u32 k) {
 }
 #endif
 
+uint forward_decl(uint x, uint y);
+
 void main() {
     u32 v;
 
-    v += vertex_main(5, 3, 4);
+    v += vertex_main(5, 3 * v + 4, 4);
 }

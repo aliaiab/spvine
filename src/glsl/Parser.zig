@@ -140,69 +140,40 @@ pub fn parseStruct(self: *Parser) !Ast.NodeIndex {
 }
 
 pub fn parseProcedure(self: *Parser) !Ast.NodeIndex {
-    std.log.info("begin: {s}", .{@src().fn_name});
-    defer std.log.info("end: {s}", .{@src().fn_name});
-
     var node_index = try self.reserveNode(.procedure);
     errdefer self.unreserveNode(node_index);
 
-    const proto = try self.parseProcedureProto();
+    const type_expr = try self.parseTypeExpr();
+
+    const identifier = try self.expectToken(.identifier);
+
+    _ = try self.expectToken(.left_paren);
+
+    const param_list = try self.parseParamList();
+
+    _ = try self.expectToken(.right_paren);
 
     var body = Ast.NodeIndex.nil;
 
     if (self.peekTokenTag() == .left_brace) {
-        body = try self.parseProcedureBody();
+        body = try self.parseStatement();
     } else {
         _ = try self.expectToken(.semicolon);
     }
 
     try self.nodeSetData(&node_index, .procedure, .{
-        .prototype = proto,
+        .return_type = type_expr,
+        .name = identifier,
+        .param_list = param_list,
         .body = body,
     });
 
-    std.debug.assert(!proto.isNil());
     std.debug.assert(!node_index.isNil());
-
-    const proc = self.node_heap.getNodePtr(.procedure, node_index.index);
-
-    std.debug.assert(!proc.prototype.isNil());
-
-    return node_index;
-}
-
-pub fn parseProcedureBody(self: *Parser) !Ast.NodeIndex {
-    std.log.info("begin: {s}", .{@src().fn_name});
-    defer std.log.info("end: {s}", .{@src().fn_name});
-
-    var node_index = try self.reserveNode(.procedure_body);
-    errdefer self.unreserveNode(node_index);
-
-    _ = try self.expectToken(.left_brace);
-
-    //TODO: use a scratch arena
-    var statements: std.ArrayListUnmanaged(Ast.NodeIndex) = .{};
-    defer statements.deinit(self.allocator);
-
-    while (self.peekTokenTag().? != .right_brace) {
-        const statement = try self.parseStatement();
-
-        try statements.append(self.allocator, statement);
-    }
-
-    _ = try self.expectToken(.right_brace);
-
-    try self.nodeSetData(&node_index, .procedure_body, .{
-        .statements = try self.node_heap.allocateDupe(self.allocator, Ast.NodeIndex, statements.items),
-    });
 
     return node_index;
 }
 
 pub fn parseProcedureProto(self: *Parser) !Ast.NodeIndex {
-    std.log.info("begin: {s}", .{@src().fn_name});
-    defer std.log.info("end: {s}", .{@src().fn_name});
-
     var node_index = try self.reserveNode(.procedure_proto);
     errdefer self.unreserveNode(node_index);
 
@@ -240,6 +211,10 @@ pub fn parseParamList(self: *Parser) !Ast.NodeIndex {
         if (self.lookAheadTokenTag(1).? != .right_paren) {
             _ = self.eatToken(.comma);
         }
+    }
+
+    if (param_nodes.items.len == 0) {
+        return Ast.NodeIndex.nil;
     }
 
     try self.nodeSetData(&node, .param_list, .{
@@ -290,7 +265,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
     switch (self.peekTokenTag().?) {
         .left_brace => {
             //allocate worst case
-            var node = try self.reserveNode(.statement_list);
+            var node = try self.reserveNode(.statement_block);
             errdefer self.unreserveNode(node);
 
             _ = self.nextToken();
@@ -308,7 +283,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
 
             _ = try self.expectToken(.right_brace);
 
-            try self.nodeSetData(&node, .statement_list, .{
+            try self.nodeSetData(&node, .statement_block, .{
                 .statements = try self.node_heap.allocateDupe(self.allocator, Ast.NodeIndex, statements.items),
             });
 
@@ -437,14 +412,23 @@ pub fn parseExpression(
 
         switch (self.peekTokenTag().?) {
             .literal_number,
-            .keyword_true,
-            .keyword_false,
             => {
                 node = try self.reserveNode(.expression_literal_number);
 
                 const literal = self.nextToken().?;
 
                 try self.nodeSetData(&node, .expression_literal_number, .{
+                    .token = literal,
+                });
+            },
+            .keyword_true,
+            .keyword_false,
+            => {
+                node = try self.reserveNode(.expression_literal_boolean);
+
+                const literal = self.nextToken().?;
+
+                try self.nodeSetData(&node, .expression_literal_boolean, .{
                     .token = literal,
                 });
             },

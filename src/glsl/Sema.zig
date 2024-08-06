@@ -115,19 +115,20 @@ pub fn analyseProcedure(
     defer self.scopePop();
 
     const procedure = ast.dataFromNode(node, .procedure);
-    const proto = ast.dataFromNode(procedure.prototype, .procedure_proto);
-    const param_list = ast.dataFromNode(proto.param_list, .param_list);
+    const param_list = ast.dataFromNode(procedure.param_list, .param_list);
 
-    for (param_list.params) |param_node| {
-        const param = ast.dataFromNode(param_node, .param_expr);
+    if (!procedure.param_list.isNil()) {
+        for (param_list.params) |param_node| {
+            const param = ast.dataFromNode(param_node, .param_expr);
 
-        try self.scopeDefine(ast.tokenString(param.name));
+            try self.scopeDefine(ast.tokenString(param.name));
+        }
     }
 
     //TODO: handle forward declaration
     if (procedure.body.isNil()) return;
 
-    const body = ast.dataFromNode(procedure.body, .procedure_body);
+    const body = ast.dataFromNode(procedure.body, .statement_block);
 
     for (body.statements) |statement_node| {
         switch (statement_node.tag) {

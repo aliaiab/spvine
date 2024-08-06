@@ -451,6 +451,25 @@ fn printAst(
         return;
     }
 
+    //TODO: if these are empty, surely they should just be Ast.NodeIndex.nil?
+    switch (node_tag) {
+        .param_list => {
+            const list = ast.dataFromNode(node, .param_list);
+
+            if (list.params.len == 0) {
+                return;
+            }
+        },
+        .statement_block => {
+            const block = ast.dataFromNode(node, .statement_block);
+
+            if (block.statements.len == 0) {
+                return;
+            }
+        },
+        else => {},
+    }
+
     const stderr = std.io.getStdErr().writer();
 
     for (0..depth) |_| {
@@ -460,7 +479,11 @@ fn printAst(
     const connecting_string = if (sibling_index == sibling_count - 1) "└" else "├";
 
     const is_leaf = switch (node_tag) {
-        .type_expr => true,
+        .type_expr,
+        .expression_literal_number,
+        .expression_literal_boolean,
+        .expression_identifier,
+        => true,
         else => false,
     };
 
@@ -469,22 +492,13 @@ fn printAst(
 
     switch (node_tag) {
         .procedure => {
-            try stderr.print("proc_decl:\n", .{});
-
             const proc = ast.dataFromNode(node, .procedure);
 
-            try printAst(ast, proc.prototype, depth + 1, 0, 2);
-            try printAst(ast, proc.body, depth + 1, 1, 2);
-        },
-        .procedure_proto => {
-            try stderr.print("proc_prototype: ", .{});
+            try stderr.print("procedure: {s}\n", .{ast.tokenString(proc.name)});
 
-            const proto = ast.dataFromNode(node, .procedure_proto);
-
-            try stderr.print("{s}\n", .{ast.tokenString(proto.name)});
-
-            try printAst(ast, proto.return_type, depth + 1, 0, 2);
-            try printAst(ast, proto.param_list, depth + 1, 1, 2);
+            try printAst(ast, proc.return_type, depth + 1, 0, 3);
+            try printAst(ast, proc.param_list, depth + 1, 1, 3);
+            try printAst(ast, proc.body, depth + 1, 2, 3);
         },
         .type_expr => {
             const type_expr = ast.dataFromNode(node, .type_expr);
@@ -517,22 +531,19 @@ fn printAst(
                 );
             }
         },
-        .procedure_body => {
-            const list = ast.dataFromNode(node, .procedure_body);
+        .statement_block => {
+            const list = ast.dataFromNode(node, .statement_block);
 
-            try stderr.print("proc_body:\n", .{});
-
-            for (list.statements, 0..) |statement, statement_index| {
-                try printAst(ast, statement, depth + 1, statement_index, list.statements.len);
-            }
-        },
-        .statement_list => {
-            const list = ast.dataFromNode(node, .statement_list);
-
-            try stderr.print("statement_list:\n", .{});
+            try stderr.print("statement_block:\n", .{});
 
             for (list.statements, 0..) |statement, statement_index| {
-                try printAst(ast, statement, depth + 1, statement_index, list.statements.len);
+                try printAst(
+                    ast,
+                    statement,
+                    depth + 1,
+                    statement_index,
+                    list.statements.len,
+                );
             }
         },
         .statement_var_init => {
@@ -558,11 +569,15 @@ fn printAst(
 
             try printAst(ast, return_statement.expression, depth + 1, 0, 1);
         },
-
         .expression_literal_number => {
             const literal_number = ast.dataFromNode(node, .expression_literal_number);
 
             try stderr.print("expression_literal_number: {s}\n", .{ast.tokenString(literal_number.token)});
+        },
+        .expression_literal_boolean => {
+            const literal_bool = ast.dataFromNode(node, .expression_literal_boolean);
+
+            try stderr.print("expression_literal_boolean: {s}\n", .{ast.tokenString(literal_bool.token)});
         },
         .expression_identifier => {
             const identifier = ast.dataFromNode(node, .expression_identifier);
