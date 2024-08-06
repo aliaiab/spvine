@@ -145,15 +145,14 @@ pub const Node = struct {
     pub const Tag = enum(u8) {
         type_expr,
         procedure,
-        procedure_proto,
         param_list,
         param_expr,
-        procedure_body,
-        statement_list,
+        statement_block,
         statement_var_init,
         statement_if,
         statement_return,
         expression_literal_number,
+        expression_literal_boolean,
         expression_identifier,
         expression_binary_assign,
         expression_binary_assign_add,
@@ -183,13 +182,10 @@ pub const Node = struct {
             token: TokenIndex,
         },
         procedure: struct {
-            prototype: NodeIndex,
-            body: NodeIndex,
-        },
-        procedure_proto: struct {
             return_type: NodeIndex,
             name: TokenIndex,
             param_list: NodeIndex,
+            body: NodeIndex,
         },
         param_list: struct {
             params: []const NodeIndex,
@@ -199,10 +195,7 @@ pub const Node = struct {
             name: TokenIndex,
             qualifier: Token.Tag,
         },
-        procedure_body: struct {
-            statements: []const NodeIndex,
-        },
-        statement_list: struct {
+        statement_block: struct {
             statements: []const NodeIndex,
         },
         statement_var_init: struct {
@@ -219,6 +212,9 @@ pub const Node = struct {
             expression: NodeIndex,
         },
         expression_literal_number: struct {
+            token: TokenIndex,
+        },
+        expression_literal_boolean: struct {
             token: TokenIndex,
         },
         expression_identifier: struct {
