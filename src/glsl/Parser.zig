@@ -597,8 +597,8 @@ pub fn unreserveNode(self: *Parser, node: Ast.NodeIndex) void {
 pub fn nodeSetData(
     self: *Parser,
     node: *Ast.NodeIndex,
-    comptime Tag: std.meta.Tag(Ast.Node.ExtraData),
-    value: std.meta.TagPayload(Ast.Node.ExtraData, Tag),
+    comptime Tag: std.meta.Tag(Ast.Node.Data),
+    value: std.meta.TagPayload(Ast.Node.Data, Tag),
 ) !void {
     node.tag = Tag;
 

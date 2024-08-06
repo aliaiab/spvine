@@ -519,7 +519,7 @@ fn printAst(
 
                     //TODO: this might make compile times bad
                     const is_leaf: bool = blk: {
-                        inline for (std.meta.fields(std.meta.TagPayload(Ast.Node.ExtraData, tag))) |field| {
+                        inline for (std.meta.fields(std.meta.TagPayload(Ast.Node.Data, tag))) |field| {
                             switch (field.type) {
                                 Ast.NodeIndex,
                                 []const Ast.NodeIndex,
