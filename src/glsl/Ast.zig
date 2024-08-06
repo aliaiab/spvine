@@ -1,6 +1,7 @@
 //! The abstract syntax tree (AST) for glsl
 
 source: []const u8,
+source_name: []const u8,
 defines: ExpandingTokenizer.DefineMap,
 tokens: TokenList.Slice,
 node_heap: NodeHeap,
@@ -16,7 +17,11 @@ pub fn deinit(self: *Ast, allocator: std.mem.Allocator) void {
     defer self.node_heap.deinit(allocator);
 }
 
-pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Ast {
+pub fn parse(
+    allocator: std.mem.Allocator,
+    source: []const u8,
+    source_name: []const u8,
+) !Ast {
     var token_list = TokenList{};
     defer token_list.deinit(allocator);
 
@@ -42,6 +47,7 @@ pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Ast {
 
     return Ast{
         .source = source,
+        .source_name = source_name,
         .tokens = token_list.toOwnedSlice(),
         .errors = try parser.errors.toOwnedSlice(allocator),
         .defines = tokenizer.defines,
@@ -66,7 +72,7 @@ pub const SourceLocation = struct {
 
 pub fn tokenLocation(self: Ast, token_index: TokenIndex) SourceLocation {
     var loc = SourceLocation{
-        .source_name = "",
+        .source_name = self.source_name,
         .line = 1,
         .column = 1,
         .line_start = 0,
