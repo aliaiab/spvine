@@ -619,10 +619,6 @@ pub const Token = struct {
         }
     };
 
-    pub fn lexeme(token: Token) ?[]const u8 {
-        return token.tag.lexeme();
-    }
-
     pub fn getKeyword(string: []const u8) ?Tag {
         return keywords.get(string);
     }
