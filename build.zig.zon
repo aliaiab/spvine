@@ -1,5 +1,5 @@
 .{
-    .name = "spvine",
+    .name = .spvine,
     .version = "0.0.0",
     .dependencies = .{},
     .paths = .{

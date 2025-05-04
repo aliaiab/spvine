@@ -47,8 +47,6 @@ pub fn parse(allocator: std.mem.Allocator, result: *Result, module: []align(4) c
     while (iterator.next()) |op_data| {
         switch (op_data.op) {
             .EntryPoint => {
-                std.log.info("Found shader entry point", .{});
-
                 const name_begin = @as([*:0]const u8, @ptrCast(&op_data.words[3]));
 
                 const name = std.mem.span(name_begin);
@@ -62,13 +60,9 @@ pub fn parse(allocator: std.mem.Allocator, result: *Result, module: []align(4) c
 
                 switch (@as(spirv.Decoration, @enumFromInt(op_data.words[2]))) {
                     .DescriptorSet => {
-                        std.log.info("Found descriptor set '{}'", .{op_data.words[3]});
-
                         ids[id].set = op_data.words[3];
                     },
                     .Binding => {
-                        std.log.info("Found descriptor set binding '{}'", .{op_data.words[3]});
-
                         ids[id].binding = op_data.words[3];
                     },
                     else => {},
@@ -81,8 +75,6 @@ pub fn parse(allocator: std.mem.Allocator, result: *Result, module: []align(4) c
             .TypeArray,
             .TypeRuntimeArray,
             => {
-                std.log.info("Found shader descriptor", .{});
-
                 const id = op_data.words[1];
 
                 ids[id].opcode = op_data.op;
@@ -108,8 +100,6 @@ pub fn parse(allocator: std.mem.Allocator, result: *Result, module: []align(4) c
                 ids[id].opcode = op_data.op;
                 ids[id].type_id = op_data.words[1];
                 ids[id].constant = op_data.words[3];
-
-                std.log.info("spirv const = {}", .{ids[id].constant});
             },
             .Variable => {
                 const id = op_data.words[2];
@@ -125,9 +115,9 @@ pub fn parse(allocator: std.mem.Allocator, result: *Result, module: []align(4) c
     id_loop: for (ids) |id| {
         if (id.opcode == .Variable and
             (id.storage_class == .Uniform or
-            id.storage_class == .UniformConstant or
-            id.storage_class == .StorageBuffer or
-            id.storage_class == .Image))
+                id.storage_class == .UniformConstant or
+                id.storage_class == .StorageBuffer or
+                id.storage_class == .Image))
         {
             const type_kind = ids[ids[id.type_id].type_id].opcode;
             const array_length = ids[ids[id.type_id].type_id].array_length;
