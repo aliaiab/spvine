@@ -410,6 +410,8 @@ pub const NodeHeap = struct {
         //TODO: this really isn't necessary and is mostly a rss optimization, maybe let's just not
         var payload_size: u32 = 0;
 
+        @setEvalBranchQuota(100000);
+
         switch (node.tag) {
             inline else => |tag| {
                 payload_size = @sizeOf(std.meta.TagPayload(Node.Data, tag));
