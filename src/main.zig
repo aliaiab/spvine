@@ -98,6 +98,9 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
         var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
 
         const stderr = &stderr_writer.interface;
+        defer {
+            stderr.flush() catch @panic("Flush error");
+        }
 
         const terminal_red = "\x1B[31m";
         const terminal_green = "\x1B[32m";
@@ -493,10 +496,12 @@ fn printAst(
         else => {},
     }
 
-    var stderr_buffer: [1024]u8 = undefined;
-    var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
+    var stderr_writer = std.fs.File.stderr().writer(&.{});
 
     const stderr = &stderr_writer.interface;
+    defer {
+        stderr.flush() catch @panic("Flush error");
+    }
 
     for (0..depth) |level| {
         const is_terminated: bool = blk: {
@@ -564,7 +569,30 @@ fn printAst(
                         }
                     }
 
-                    try stderr.print("{s}: ", .{@tagName(tag)});
+                    const symbol_map: std.EnumMap(Ast.Node.Tag, []const u8) = .init(.{
+                        .expression_binary_comma = ",",
+                        .expression_binary_add = "+",
+                        .expression_binary_sub = "-",
+                        .expression_binary_mul = "*",
+                        .expression_binary_div = "/",
+                        .expression_binary_eql = "==",
+                        .expression_binary_assign = "=",
+                        .expression_binary_assign_add = "+=",
+                        .expression_binary_assign_sub = "-=",
+                        .expression_binary_assign_mul = "*=",
+                        .expression_binary_assign_div = "/=",
+                        .expression_binary_gt = ">",
+                        .expression_binary_geql = ">=",
+                        .expression_binary_lt = "<",
+                        .expression_binary_leql = "<=",
+                        .statement_if = "if",
+                    });
+
+                    if (symbol_map.get(tag)) |node_symbol| {
+                        try stderr.print("[{s}]", .{node_symbol});
+                    } else {
+                        try stderr.print("{s}: ", .{@tagName(tag)});
+                    }
 
                     inline for (std.meta.fields(@TypeOf(node_data)), 0..) |payload_field, field_index| {
                         const field_value = @field(node_data, payload_field.name);
@@ -574,7 +602,7 @@ fn printAst(
                                 try stderr.print(payload_field.name ++ ": " ++ "{s}", .{ast.tokenString(field_value)});
                                 const token_location = ast.tokenLocation(field_value);
 
-                                try stderr.print("({s}:{}:{}:)", .{ token_location.source_name, token_location.line, token_location.column });
+                                try stderr.print("({s}:{}:{})", .{ token_location.source_name, token_location.line, token_location.column });
                             },
                             Tokenizer.Token.Tag => {
                                 try stderr.print(payload_field.name ++ ": " ++ "{s}", .{@tagName(field_value)});
