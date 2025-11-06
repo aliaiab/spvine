@@ -3,15 +3,15 @@ pub fn build(builder: *std.Build) void {
 
     const optimize = builder.standardOptimizeOption(.{});
 
-    _ = builder.addModule("spvine", .{
+    const spvine_module = builder.addModule("spvine", .{
         .root_source_file = builder.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
     });
 
     const exe = builder.addExecutable(.{
         .name = "spvine",
-        .root_source_file = builder.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = spvine_module,
     });
 
     const use_llvm = false;
@@ -33,9 +33,7 @@ pub fn build(builder: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     const exe_tests = builder.addTest(.{
-        .root_source_file = builder.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = spvine_module,
     });
 
     const run_tests = builder.addRunArtifact(exe_tests);

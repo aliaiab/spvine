@@ -21,9 +21,6 @@ pub fn main() !void {
     const file = try std.fs.cwd().openFile(test_glsl_path, .{});
     defer file.close();
 
-    const file_metadata = try file.metadata();
-    _ = file_metadata; // autofix
-
     const test_glsl = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
     defer allocator.free(test_glsl);
 
@@ -50,11 +47,12 @@ pub fn main() !void {
     {
         std.debug.print("\nglsl.Ast:\n", .{});
 
-        var terminated_levels = std.ArrayList(u8).init(allocator);
-        defer terminated_levels.deinit();
+        var terminated_levels: std.ArrayList(u8) = .empty;
+        defer terminated_levels.deinit(allocator);
 
         for (ast.root_decls, 0..) |root_decl, decl_index| {
             try printAst(
+                allocator,
                 ast,
                 &terminated_levels,
                 root_decl,
@@ -96,7 +94,10 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
 
         const found_token = ast.tokens.items(.tag)[error_value.token];
 
-        const stderr = std.io.getStdErr().writer();
+        var stderr_buffer: [1024]u8 = undefined;
+        var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
+
+        const stderr = &stderr_writer.interface;
 
         const terminal_red = "\x1B[31m";
         const terminal_green = "\x1B[32m";
@@ -449,6 +450,7 @@ fn printAstToken(
 }
 
 fn printAst(
+    gpa: std.mem.Allocator,
     ast: Ast,
     terminated_levels: *std.ArrayList(u8),
     node: Ast.NodeIndex,
@@ -466,7 +468,7 @@ fn printAst(
     const is_terminator = sibling_index == sibling_count - 1;
 
     if (is_terminator) {
-        try terminated_levels.append(@intCast(depth));
+        try terminated_levels.append(gpa, @intCast(depth));
     }
 
     defer if (is_terminator) {
@@ -491,7 +493,10 @@ fn printAst(
         else => {},
     }
 
-    const stderr = std.io.getStdErr().writer();
+    var stderr_buffer: [1024]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
+
+    const stderr = &stderr_writer.interface;
 
     for (0..depth) |level| {
         const is_terminated: bool = blk: {
@@ -600,6 +605,7 @@ fn printAst(
                             Ast.NodeIndex => {
                                 if (!field_value.isNil()) {
                                     try printAst(
+                                        gpa,
                                         ast,
                                         terminated_levels,
                                         field_value,
@@ -613,6 +619,7 @@ fn printAst(
                             []const Ast.NodeIndex => {
                                 for (field_value, 0..) |sub_node, array_sibling_index| {
                                     try printAst(
+                                        gpa,
                                         ast,
                                         terminated_levels,
                                         sub_node,

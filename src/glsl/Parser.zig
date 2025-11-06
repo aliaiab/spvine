@@ -526,6 +526,8 @@ pub fn parseExpression(
 
                         var sub_node = try self.reserveNode(binary_node_type);
 
+                        @setEvalBranchQuota(1000000);
+
                         try self.nodeSetData(&sub_node, binary_node_type, .{
                             .left = lhs,
                             .right = rhs,
@@ -589,7 +591,7 @@ pub fn reserveNode(self: *Parser, comptime tag: Ast.Node.Tag) !Ast.NodeIndex {
 pub fn unreserveNode(self: *Parser, node: Ast.NodeIndex) void {
     self.node_heap.freeNode(node);
 
-    const context = self.node_context_stack.pop();
+    const context = self.node_context_stack.pop().?;
 
     self.token_index = context.saved_token_index;
 }

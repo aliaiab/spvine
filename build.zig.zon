@@ -1,6 +1,8 @@
 .{
+    .fingerprint = 0xa52e212b145393a,
     .name = .spvine,
     .version = "0.0.0",
+    .minimum_zig_version = "0.15.2",
     .dependencies = .{},
     .paths = .{
         "",
