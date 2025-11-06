@@ -84,7 +84,8 @@ pub fn tokenStringEql(a: []const u8, b: []const u8) bool {
         b_index += 1;
     }
 
-    return true;
+    //Ensures that both strings have been fully examined
+    return a_index == a.len and b_index == b.len;
 }
 
 ///Returns the number of characters that contribute to the identity of the token string
@@ -140,6 +141,8 @@ test "Token string equality" {
     try expect(tokenStringEql("v\\\noid", "void"));
     try expect(tokenStringEql("v\\\noid", "v\\\noid"));
     try expect(tokenStringEql("v\\\n oid", "void") == false);
+
+    try expect(tokenStringEql("fmadd", "fmad") == false);
 }
 
 test "Token string hash" {
@@ -151,6 +154,8 @@ test "Token string hash" {
 
     try expect(tokenStringHash("f32") == tokenStringHash("f32"));
     try expect(tokenStringHash("f32") != tokenStringHash("f64"));
+
+    try expect(tokenStringHash("fmadd") != tokenStringHash("fmad"));
 }
 
 const std = @import("std");

@@ -18,6 +18,14 @@ pub fn main() !void {
 
     const allocator = gpa.allocator();
 
+    var stderr_buffer: [1024]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
+
+    const stderr = &stderr_writer.interface;
+    defer {
+        stderr.flush() catch @panic("Flush error");
+    }
+
     const file = try std.fs.cwd().openFile(test_glsl_path, .{});
     defer file.close();
 
@@ -35,11 +43,13 @@ pub fn main() !void {
     }
 
     for (ast.tokens.items(.tag), 0..) |token_tag, token_index| {
-        std.log.info("token_tag: {s}, '{s}'", .{ @tagName(token_tag), ast.tokenString(@intCast(token_index)) });
+        _ = token_tag; // autofix
+        _ = token_index; // autofix
+        // std.log.info("token_tag: {s}, '{s}'", .{ @tagName(token_tag), ast.tokenString(@intCast(token_index)) });
     }
 
     if (ast.errors.len != 0) {
-        printErrors(test_glsl_path, ast);
+        printErrors(test_glsl_path, ast, null, ast.errors, stderr);
 
         return;
     }
@@ -70,21 +80,21 @@ pub fn main() !void {
     _ = spirv_air; // autofix
 
     if (errors.len != 0) {
-        for (errors) |error_value| {
-            switch (error_value) {
-                .identifier_redefined => |identifier_redefined| {
-                    _ = identifier_redefined; // autofix
-                    std.log.err("Identifier Redefined!", .{});
-                },
-            }
-        }
+        printErrors(test_glsl_path, ast, null, errors, stderr);
 
         return;
     }
 }
 
-fn printErrors(file_path: []const u8, ast: Ast) void {
-    for (ast.errors) |error_value| {
+fn printErrors(
+    file_path: []const u8,
+    ast: Ast,
+    sema: ?*glsl.Sema,
+    errors: []const Ast.Error,
+    stderr: *std.Io.Writer,
+) void {
+    _ = sema; // autofix
+    for (errors) |error_value| {
         const is_same_line = ast.tokenLocation(error_value.token -| 1).line == ast.tokenLocation(error_value.token).line;
 
         const loc = if (is_same_line)
@@ -93,14 +103,6 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
             ast.tokenLocation(error_value.token - if (error_value.tag == .expected_token) @as(u32, 1) else @as(u32, 0));
 
         const found_token = ast.tokens.items(.tag)[error_value.token];
-
-        var stderr_buffer: [1024]u8 = undefined;
-        var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
-
-        const stderr = &stderr_writer.interface;
-        defer {
-            stderr.flush() catch @panic("Flush error");
-        }
 
         const terminal_red = "\x1B[31m";
         const terminal_green = "\x1B[32m";
@@ -187,6 +189,37 @@ fn printErrors(file_path: []const u8, ast: Ast) void {
                     terminal_red,
                     color_end,
                     found_token.lexeme() orelse @tagName(found_token),
+                }) catch {};
+            },
+            .undeclared_identifier => {
+                stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " Undeclared identifier '{s}'\n" ++ color_end, .{
+                    file_path,
+                    loc.line,
+                    loc.column,
+                    terminal_red,
+                    color_end,
+                    ast.tokenString(error_value.token),
+                }) catch {};
+            },
+            .identifier_redefined => {
+                stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " Identifier '{s}' redefined\n" ++ color_end, .{
+                    file_path,
+                    loc.line,
+                    loc.column,
+                    terminal_red,
+                    color_end,
+                    ast.tokenString(error_value.token),
+                }) catch {};
+            },
+            .type_mismatch => {
+                stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " Type mismatch: cannot convert from type {s} to {s}\n" ++ color_end, .{
+                    file_path,
+                    loc.line,
+                    loc.column,
+                    terminal_red,
+                    color_end,
+                    @tagName(error_value.data.type_mismatch.rhs_type),
+                    @tagName(error_value.data.type_mismatch.lhs_type),
                 }) catch {};
             },
         }
