@@ -28,7 +28,7 @@ pub fn parse(
     var tokenizer = ExpandingTokenizer.init(allocator, source);
     errdefer tokenizer.deinit();
 
-    var errors: std.ArrayListUnmanaged(Error) = .{};
+    var errors: std.ArrayList(Error) = .{};
     // errdefer errors.deinit(allocator);
 
     try tokenizer.tokenize(&token_list, &errors);

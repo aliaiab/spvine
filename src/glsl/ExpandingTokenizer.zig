@@ -25,7 +25,7 @@ pub fn deinit(self: *ExpandingTokenizer) void {
 pub fn tokenize(
     self: *ExpandingTokenizer,
     tokens: *Ast.TokenList,
-    errors: *std.ArrayListUnmanaged(Ast.Error),
+    errors: *std.ArrayList(Ast.Error),
 ) !void {
     var if_condition: bool = true;
     var if_condition_level: u32 = 0;
