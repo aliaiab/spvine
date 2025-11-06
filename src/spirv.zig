@@ -486,7 +486,7 @@ pub const MemoryAccess = packed struct(u32) {
     _padding_0: u11 = 0,
     AliasScopeINTELMask: bool = false,
     NoAliasINTELMask: bool = false,
-    _padding_1: u14 = 0,
+    _padding_1: u13 = 0,
 };
 
 pub const Scope = enum(u32) {

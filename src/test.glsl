@@ -14,14 +14,16 @@
 // typedef f64 double
 
 //Fused multiply-add
-f32 fmadd(in const f32 a, inout f32 b, out f32 c) { //hello from comment!
+f32 fmadd(in const f32 a, f32 b, f32 c) { //hello from comment!
     return a * c + c;
 }
 
 #define CONSTANT_FIVE
 // #define FMADD(a, b) fmadd(a, b, b + CONSTANT_FIVE);
 
-#if 1
+bool vertex_main(u32 z, u32 w, u32 k);
+
+#if 0
 //Vertex main
 u32 vertex_main(u32 z, u32 w, u32 k) {
     f32 x = w;
@@ -69,12 +71,13 @@ u32 vertex_main(u32 z, u32 w, u32 k) {
 
 uint forward_decl(uint x, uint y);
 
-u32 main() {
-    u32 v;
+void main() {
+    u32 c = fmadd(2, 3, 3);
+
+    // int c = 3;
+    u32 v = c - 1;
 
     v += vertex_main(5, 3 * v + 4, 4);
     v *= forward_decl(v, v * v + v);
     v += 1 - v * 5;
-
-    return v;
 }

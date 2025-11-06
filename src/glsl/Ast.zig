@@ -114,6 +114,16 @@ pub const Error = struct {
     data: union {
         none: void,
         expected_token: Token.Tag,
+
+        identifier_redefined: struct {
+            redefinition_identifier: Ast.TokenIndex,
+            ///The identifier of the original definition
+            definition_identifier: Ast.TokenIndex,
+        },
+        type_mismatch: struct {
+            lhs_type: Sema.TypeIndex,
+            rhs_type: Sema.TypeIndex,
+        },
     } = .{ .none = {} },
 
     pub const Tag = enum(u8) {
@@ -123,6 +133,11 @@ pub const Error = struct {
         unexpected_token,
         unsupported_directive,
         directive_error,
+
+        //Semantic errors
+        undeclared_identifier,
+        identifier_redefined,
+        type_mismatch,
     };
 };
 
@@ -198,48 +213,17 @@ pub const Node = struct {
     };
 
     pub const Data = union(Tag) {
-        type_expr: struct {
-            token: TokenIndex,
-        },
-        procedure: struct {
-            return_type: NodeIndex,
-            name: TokenIndex,
-            param_list: NodeIndex,
-            body: NodeIndex,
-        },
-        param_list: struct {
-            params: []const NodeIndex,
-        },
-        param_expr: struct {
-            type_expr: NodeIndex,
-            name: TokenIndex,
-            qualifier: Token.Tag,
-        },
-        statement_block: struct {
-            statements: []const NodeIndex,
-        },
-        statement_var_init: struct {
-            type_expr: NodeIndex,
-            identifier: TokenIndex,
-            expression: NodeIndex,
-        },
-        statement_if: struct {
-            condition_expression: NodeIndex,
-            taken_statement: NodeIndex,
-            not_taken_statement: NodeIndex,
-        },
-        statement_return: struct {
-            expression: NodeIndex,
-        },
-        expression_literal_number: struct {
-            token: TokenIndex,
-        },
-        expression_literal_boolean: struct {
-            token: TokenIndex,
-        },
-        expression_identifier: struct {
-            token: TokenIndex,
-        },
+        type_expr: TypeExpr,
+        procedure: Procedure,
+        param_list: ParamList,
+        param_expr: ParamExpr,
+        statement_block: StatementBlock,
+        statement_var_init: StatementVarInit,
+        statement_if: StatementIf,
+        statement_return: StatementReturn,
+        expression_literal_number: ExpressionLiteralNumber,
+        expression_literal_boolean: LiteralBoolean,
+        expression_identifier: Identifier,
         expression_binary_assign: BinaryExpression,
         expression_binary_assign_add: BinaryExpression,
         expression_binary_assign_sub: BinaryExpression,
@@ -261,11 +245,65 @@ pub const Node = struct {
         expression_binary_geql: BinaryExpression,
         expression_binary_proc_call: BinaryExpression,
         expression_binary_comma: BinaryExpression,
+    };
 
-        pub const BinaryExpression = struct {
-            left: NodeIndex,
-            right: NodeIndex,
-        };
+    pub const Identifier = struct {
+        token: TokenIndex,
+    };
+
+    pub const LiteralBoolean = struct {
+        token: TokenIndex,
+    };
+
+    pub const ExpressionLiteralNumber = struct {
+        token: TokenIndex,
+    };
+
+    pub const TypeExpr = struct {
+        token: TokenIndex,
+    };
+
+    pub const Procedure = struct {
+        return_type: NodeIndex,
+        name: TokenIndex,
+        param_list: NodeIndex,
+        body: NodeIndex,
+    };
+
+    pub const ParamList = struct {
+        params: []const NodeIndex,
+    };
+
+    pub const ParamExpr = struct {
+        type_expr: NodeIndex,
+        name: TokenIndex,
+        qualifier: Token.Tag,
+    };
+
+    pub const BinaryExpression = struct {
+        op_token: TokenIndex,
+        left: NodeIndex,
+        right: NodeIndex,
+    };
+
+    pub const StatementIf = struct {
+        condition_expression: NodeIndex,
+        taken_statement: NodeIndex,
+        not_taken_statement: NodeIndex,
+    };
+
+    pub const StatementReturn = struct {
+        expression: NodeIndex,
+    };
+
+    pub const StatementVarInit = struct {
+        type_expr: NodeIndex,
+        identifier: TokenIndex,
+        expression: NodeIndex,
+    };
+
+    pub const StatementBlock = struct {
+        statements: []const NodeIndex,
     };
 };
 
@@ -434,6 +472,7 @@ test "Node Heap" {
     const node_index = try node_heap.allocateNode(std.testing.allocator, .expression_binary_add);
 
     node_heap.getNodePtr(.expression_binary_add, node_index).* = .{
+        .op_token = 0,
         .left = Ast.NodeIndex.nil,
         .right = Ast.NodeIndex.nil,
     };
@@ -450,6 +489,7 @@ test "Node Heap" {
 
 const std = @import("std");
 const Ast = @This();
+const Sema = @import("Sema.zig");
 const Token = @import("Tokenizer.zig").Token;
 const ExpandingTokenizer = @import("ExpandingTokenizer.zig");
 const Parser = @import("Parser.zig");
