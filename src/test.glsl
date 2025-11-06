@@ -1,20 +1,20 @@
 #version 450
 
-#define f32 float 
-#define u32 uint 
+#define f32 float
+#define u32 uint
 
 #define NUM 0
 
-#if NUM 
+#if NUM
 #    include "simple.vert.glsl"
 #    error Six is not zero!
 #endif
 
 //expanded as: 'typedef' ^'float' 'uint'
-// typedef f64 double 
+// typedef f64 double
 
 //Fused multiply-add
-f32 fmadd(in const f32 a, inout f32 b, const f32 c) { //hello from comment!
+f32 fmadd(in const f32 a, inout f32 b, out f32 c) { //hello from comment!
     return a * c + c;
 }
 
@@ -35,9 +35,10 @@ u32 vertex_main(u32 z, u32 w, u32 k) {
     bool sus = false;
 
     if (sus = true) {
+        sus = false;
     }
 
-    if (z > w + 3) {
+    if (z < w + 3) {
         z += 3;
     }
     else if (w * 10 - 3 <= z) {
@@ -58,8 +59,6 @@ u32 vertex_main(u32 z, u32 w, u32 k) {
 
     u32 j;
 
-    "Hello";
-
     3;
 
     x += fmadd(x, y, z);
@@ -70,8 +69,12 @@ u32 vertex_main(u32 z, u32 w, u32 k) {
 
 uint forward_decl(uint x, uint y);
 
-void main() {
+u32 main() {
     u32 v;
 
     v += vertex_main(5, 3 * v + 4, 4);
+    v *= forward_decl(v, v * v + v);
+    v += 1 - v * 5;
+
+    return v;
 }

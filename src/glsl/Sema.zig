@@ -141,8 +141,8 @@ pub fn analyseProcedure(
         }
     }
 
-    if (self.scopeResolve("x") != null) {
-        std.log.info("Has var 'x'!!!!", .{});
+    if (self.scopeResolve("v") != null) {
+        std.log.info("Has var 'v'!!!!", .{});
     }
 }
 
