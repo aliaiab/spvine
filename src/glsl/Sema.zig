@@ -1,20 +1,20 @@
 //! Implements the semantic analysis stage of the frontend
 
 allocator: std.mem.Allocator,
-scope_stack: std.ArrayListUnmanaged(struct {
+scope_stack: std.ArrayList(struct {
     identifiers: token_map.Map(IdentifierDefinition) = .{},
 }) = .{},
 procedures: token_map.Map(Procedure) = .{},
 types: std.MultiArrayList(Type) = .{},
 
 air_builder: struct {
-    instructions: std.ArrayListUnmanaged(spirv.Air.Instruction) = .{},
-    blocks: std.ArrayListUnmanaged(spirv.Air.Block) = .{},
-    functions: std.ArrayListUnmanaged(spirv.Air.Function) = .{},
-    variables: std.ArrayListUnmanaged(spirv.Air.Variable) = .{},
-    types: std.ArrayListUnmanaged(spirv.Air.Type) = .{},
+    instructions: std.ArrayList(spirv.Air.Instruction) = .{},
+    blocks: std.ArrayList(spirv.Air.Block) = .{},
+    functions: std.ArrayList(spirv.Air.Function) = .{},
+    variables: std.ArrayList(spirv.Air.Variable) = .{},
+    types: std.ArrayList(spirv.Air.Type) = .{},
 } = .{},
-errors: std.ArrayListUnmanaged(Ast.Error) = .{},
+errors: std.ArrayList(Ast.Error) = .{},
 
 pub const Procedure = struct {
     return_type: TypeIndex,

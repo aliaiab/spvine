@@ -2,7 +2,7 @@ pub fn lowerFromSpirvAir(
     allocator: std.mem.Allocator,
     air: spirv.Air,
 ) !Mir {
-    var mir_instructions: std.ArrayListUnmanaged(Mir.Instruction) = .{};
+    var mir_instructions: std.ArrayList(Mir.Instruction) = .{};
     defer mir_instructions.deinit(allocator);
 
     for (air.functions) |function| {

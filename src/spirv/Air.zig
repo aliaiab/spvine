@@ -22,19 +22,19 @@ pub fn fromSpirvBytes(allocator: std.mem.Allocator, bytes: []align(4) const u8) 
     const id_count = iterator.module[3];
     _ = id_count;
 
-    var instructions: std.ArrayListUnmanaged(Instruction) = .{};
+    var instructions: std.ArrayList(Instruction) = .{};
     defer instructions.deinit(allocator);
 
-    var blocks: std.ArrayListUnmanaged(Block) = .{};
+    var blocks: std.ArrayList(Block) = .{};
     defer blocks.deinit(allocator);
 
-    var functions: std.ArrayListUnmanaged(Function) = .{};
+    var functions: std.ArrayList(Function) = .{};
     defer functions.deinit(allocator);
 
-    const variables: std.ArrayListUnmanaged(Variable) = .{};
+    const variables: std.ArrayList(Variable) = .{};
     _ = variables;
 
-    var types: std.ArrayListUnmanaged(Type) = .{};
+    var types: std.ArrayList(Type) = .{};
     defer types.deinit(allocator);
 
     var type_index_map: TypeIndexMap = .{};
@@ -262,7 +262,7 @@ pub const Instruction = struct {
 pub fn parseType(
     allocator: std.mem.Allocator,
     bytes: []align(4) const u8,
-    types: *std.ArrayListUnmanaged(Type),
+    types: *std.ArrayList(Type),
     type_index_map: *TypeIndexMap,
     op_index: u32,
 ) !TypeIndex {
