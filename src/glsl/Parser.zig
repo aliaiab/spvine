@@ -6,11 +6,11 @@ token_tags: []const Token.Tag,
 token_starts: []const u32,
 token_ends: []const u32,
 token_index: u32,
-node_context_stack: std.ArrayListUnmanaged(struct {
+node_context_stack: std.ArrayList(struct {
     saved_token_index: u32,
     saved_error_index: u32,
 }),
-errors: std.ArrayListUnmanaged(Ast.Error),
+errors: std.ArrayList(Ast.Error),
 node_heap: Ast.NodeHeap = .{},
 root_decls: []Ast.NodeIndex,
 
@@ -49,7 +49,7 @@ pub fn parse(self: *Parser) !void {
         directive,
     } = .start;
 
-    var root_nodes: std.ArrayListUnmanaged(Ast.NodeIndex) = .{};
+    var root_nodes: std.ArrayList(Ast.NodeIndex) = .{};
     defer root_nodes.deinit(self.allocator);
 
     _ = try self.expectToken(.directive_version);
@@ -176,7 +176,7 @@ pub fn parseParamList(self: *Parser) !Ast.NodeIndex {
     var node = try self.reserveNode(.param_list);
     errdefer self.unreserveNode(node);
 
-    var param_nodes: std.ArrayListUnmanaged(Ast.NodeIndex) = .{};
+    var param_nodes: std.ArrayList(Ast.NodeIndex) = .{};
     defer param_nodes.deinit(self.allocator);
 
     while (self.peekTokenTag().? != .right_paren) {
@@ -245,7 +245,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
 
             _ = self.nextToken();
 
-            var statements: std.ArrayListUnmanaged(Ast.NodeIndex) = .{};
+            var statements: std.ArrayList(Ast.NodeIndex) = .{};
             defer statements.deinit(self.allocator);
 
             while (self.peekTokenTag().? != .right_brace) {
