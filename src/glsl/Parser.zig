@@ -83,6 +83,7 @@ pub fn parse(self: *Parser) !void {
                 .keyword_float,
                 .keyword_int,
                 .keyword_uint,
+                .keyword_bool,
                 .identifier,
                 => {
                     const proc = try self.parseProcedure();
@@ -494,9 +495,12 @@ pub fn parseExpression(
                 node = try self.parseExpression(.{});
 
                 if (lhs.tag == .expression_identifier) {
+                    const identifier_data: Ast.Node.Identifier = self.node_heap.getNodePtrConst(.expression_identifier, lhs.index).*;
+
                     var sub_node = try self.reserveNode(.expression_binary_proc_call);
 
                     try self.nodeSetData(&sub_node, .expression_binary_proc_call, .{
+                        .op_token = identifier_data.token,
                         .left = lhs,
                         .right = node,
                     });
@@ -505,6 +509,8 @@ pub fn parseExpression(
                 }
             },
             inline else => |tag| {
+                const op_token = self.token_index;
+
                 defer switch (tag) {
                     .left_bracket => {
                         _ = self.eatToken(.right_bracket);
@@ -529,6 +535,7 @@ pub fn parseExpression(
                         @setEvalBranchQuota(1000000);
 
                         try self.nodeSetData(&sub_node, binary_node_type, .{
+                            .op_token = op_token,
                             .left = lhs,
                             .right = rhs,
                         });

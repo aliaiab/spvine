@@ -295,6 +295,9 @@ pub fn next(self: *Tokenizer) ?Token {
                     self.index += 1;
                     break;
                 },
+                '0'...'9' => {
+                    self.state = .literal_number;
+                },
                 else => {
                     token.tag = .minus;
                     self.state = .start;
