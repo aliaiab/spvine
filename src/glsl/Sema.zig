@@ -5,7 +5,8 @@ scope_stack: std.ArrayList(struct {
     identifiers: token_map.Map(IdentifierDefinition) = .{},
 }) = .{},
 procedures: token_map.Map(Procedure) = .{},
-types: std.MultiArrayList(Type) = .{},
+types: std.ArrayList(Type) = .{},
+type_map: token_map.Map(TypeIndex) = .{},
 
 air_builder: struct {
     instructions: std.ArrayList(spirv.Air.Instruction) = .{},
@@ -22,20 +23,21 @@ pub const Procedure = struct {
 
     pub const Parameter = struct {
         type_index: TypeIndex,
-        qualifier: Qualifier,
-
-        pub const Qualifier = enum {
-            constant,
-            in,
-            inout,
-            out,
-        };
+        qualifier: ValueQualifier,
     };
 };
 
 pub const IdentifierDefinition = struct {
     token_index: Ast.TokenIndex,
     type_index: TypeIndex,
+    qualifier: ValueQualifier,
+};
+
+pub const ValueQualifier = enum {
+    constant,
+    in,
+    inout,
+    out,
 };
 
 pub fn deinit(
@@ -53,38 +55,24 @@ pub fn deinit(
     self.* = undefined;
 }
 
-pub const Type = struct {
-    tag: Tag,
-    data_start: u32,
-    data_end: u32,
+pub const Type = union(enum) {
+    @"struct": struct {
+        name: Ast.TokenIndex,
+        fields: token_map.Map(StructField),
+    },
 
-    pub const Tag = enum {
-        literal_int,
-        literal_float,
-        literal_string,
-        bool,
-        int,
-        uint,
-        float,
-        double,
-        vec2,
-        vec3,
-        vec4,
-        @"struct",
+    pub const StructField = struct {
+        type_index: TypeIndex,
+        node: Ast.NodeIndex,
     };
 };
 
 ///Analyse the root node of the ast
-pub fn analyse(ast: Ast, allocator: std.mem.Allocator) !struct {
+pub fn analyse(sema: *Sema, ast: Ast, allocator: std.mem.Allocator) !struct {
     spirv.Air,
     []Ast.Error,
 } {
     const root_decls = ast.root_decls;
-
-    var sema: Sema = .{
-        .allocator = allocator,
-    };
-    defer sema.deinit(allocator);
 
     try sema.scopePush();
     defer sema.scopePop();
@@ -99,7 +87,17 @@ pub fn analyse(ast: Ast, allocator: std.mem.Allocator) !struct {
                         error.IdentifierAlreadyDefined,
                         error.TypeMismatch,
                         error.UndeclaredIdentifier,
+                        error.TypeIncompatibilty,
+                        error.ModifiedConstant,
                         => {},
+                        else => return e,
+                    }
+                };
+            },
+            .struct_definition => {
+                sema.analyseStructDefinition(ast, decl) catch |e| {
+                    switch (e) {
+                        error.IdentifierAlreadyDefined => {},
                         else => return e,
                     }
                 };
@@ -128,6 +126,77 @@ pub fn analyse(ast: Ast, allocator: std.mem.Allocator) !struct {
     };
 }
 
+pub fn analyseStructDefinition(
+    self: *Sema,
+    ast: Ast,
+    node: Ast.NodeIndex,
+) !void {
+    const definition: Ast.Node.StructDefinition = ast.dataFromNode(node, .struct_definition);
+
+    var fields: token_map.Map(Type.StructField) = .{};
+
+    for (definition.fields) |field_node| {
+        const field_node_data: Ast.Node.StructField = ast.dataFromNode(field_node, .struct_field);
+
+        const type_expr = try self.resolveTypeFromTypeExpr(ast, field_node_data.type_expr);
+
+        if (fields.get(ast.tokenString(field_node_data.name))) |original_field| {
+            const original_field_node_data: Ast.Node.StructField = ast.dataFromNode(original_field.node, .struct_field);
+
+            try self.errors.append(self.allocator, .{
+                .tag = .identifier_redefined,
+                .token = field_node_data.name,
+                .data = .{
+                    .identifier_redefined = .{
+                        .redefinition_identifier = field_node_data.name,
+                        .definition_identifier = original_field_node_data.name,
+                    },
+                },
+            });
+
+            return error.IdentifierAlreadyDefined;
+        }
+
+        try fields.putNoClobber(
+            self.allocator,
+            ast.tokenString(field_node_data.name),
+            .{ .type_index = type_expr, .node = field_node },
+        );
+    }
+
+    if (self.type_map.get(ast.tokenString(definition.name))) |type_index| {
+        const type_data = self.types.items[type_index.toArrayIndex().?];
+
+        try self.errors.append(self.allocator, .{
+            .tag = .identifier_redefined,
+            .token = definition.name,
+            .data = .{
+                .identifier_redefined = .{
+                    .redefinition_identifier = definition.name,
+                    .definition_identifier = type_data.@"struct".name,
+                },
+            },
+        });
+
+        return error.IdentifierAlreadyDefined;
+    }
+
+    const type_index: TypeIndex = .fromArrayIndex(self.types.items.len);
+
+    try self.types.append(self.allocator, .{
+        .@"struct" = .{
+            .name = definition.name,
+            .fields = fields,
+        },
+    });
+
+    try self.type_map.put(
+        self.allocator,
+        ast.tokenString(definition.name),
+        type_index,
+    );
+}
+
 pub fn analyseProcedure(
     self: *Sema,
     ast: Ast,
@@ -151,7 +220,7 @@ pub fn analyseProcedure(
 
     procedure_definition.return_type = try self.resolveTypeFromTypeExpr(ast, procedure.return_type);
 
-    if (!procedure.param_list.isNil()) {
+    if (procedure.param_list != Ast.NodeIndex.nil) {
         const parameters = try self.allocator.alloc(Procedure.Parameter, param_list.params.len);
         errdefer self.allocator.free(parameters);
 
@@ -173,26 +242,120 @@ pub fn analyseProcedure(
 
             param_definition.type_index = param_type;
 
-            try self.scopeDefine(ast, param.name, param_type);
+            try self.scopeDefine(
+                ast,
+                param.name,
+                param_type,
+                param_definition.qualifier,
+            );
         }
     }
 
     //TODO: handle forward declaration
-    if (procedure.body.isNil()) return;
+    if (procedure.body == Ast.NodeIndex.nil) return;
 
-    const body = ast.dataFromNode(procedure.body, .statement_block);
+    try self.analyseStatement(
+        ast,
+        procedure_definition.*,
+        procedure.body,
+        .{ .block_new_scope = false },
+    );
+}
 
-    for (body.statements) |statement_node| {
-        switch (statement_node.tag) {
-            .statement_var_init => {
-                const var_init: Ast.Node.StatementVarInit = ast.dataFromNode(statement_node, .statement_var_init);
+pub fn analyseStatement(
+    self: *Sema,
+    ast: Ast,
+    procedure: Procedure,
+    statement_node: Ast.NodeIndex,
+    options: struct {
+        ///Whether a statement_block should cause a new scope
+        block_new_scope: bool = true,
+    },
+) !void {
+    if (statement_node == Ast.NodeIndex.nil) {
+        return;
+    }
 
-                const type_index = try self.resolveTypeFromExpression(ast, statement_node);
+    switch (statement_node.tag) {
+        .statement_var_init => {
+            const var_init: Ast.Node.StatementVarInit = ast.dataFromNode(statement_node, .statement_var_init);
 
-                try self.scopeDefine(ast, var_init.identifier, type_index);
-            },
-            else => {},
-        }
+            const type_index = try self.resolveTypeFromExpression(ast, statement_node);
+
+            try self.scopeDefine(
+                ast,
+                var_init.identifier,
+                type_index,
+                switch (var_init.qualifier) {
+                    .keyword_in => .in,
+                    .keyword_const => .constant,
+                    else => unreachable,
+                },
+            );
+        },
+        .statement_if => {
+            const statement_if: Ast.Node.StatementIf = ast.dataFromNode(statement_node, .statement_if);
+
+            const condition_type = try self.resolveTypeFromExpression(ast, statement_if.condition_expression);
+
+            _ = self.coerceTypeAssign(ast, .bool, condition_type) orelse {
+                try self.errors.append(self.allocator, .{
+                    .tag = .type_mismatch,
+                    //This will point to the token within the if statement
+                    .token = statement_if.if_token + 2,
+                    .data = .{
+                        .type_mismatch = .{
+                            .lhs_type = .bool,
+                            .rhs_type = condition_type,
+                        },
+                    },
+                });
+
+                return error.TypeMismatch;
+            };
+
+            try self.analyseStatement(ast, procedure, statement_if.taken_statement, .{});
+            try self.analyseStatement(ast, procedure, statement_if.not_taken_statement, .{});
+        },
+        .statement_block => {
+            const body = ast.dataFromNode(statement_node, .statement_block);
+
+            if (options.block_new_scope) try self.scopePush();
+            defer if (options.block_new_scope) self.scopePop();
+
+            for (body.statements) |sub_statement| {
+                try self.analyseStatement(ast, procedure, sub_statement, .{});
+            }
+        },
+        .expression_binary_assign,
+        .expression_binary_assign_add,
+        .expression_binary_assign_sub,
+        .expression_binary_assign_mul,
+        .expression_binary_assign_div,
+        => {
+            _ = try self.resolveTypeFromExpression(ast, statement_node);
+        },
+        .statement_return => {
+            const statement_return: Ast.Node.StatementReturn = ast.dataFromNode(statement_node, .statement_return);
+
+            const expr_type = try self.resolveTypeFromExpression(ast, statement_return.expression);
+
+            _ = self.coerceTypeAssign(ast, procedure.return_type, expr_type) orelse {
+                try self.errors.append(self.allocator, .{
+                    .tag = .type_mismatch,
+                    .token = statement_return.return_token,
+                    .data = .{
+                        .type_mismatch = .{
+                            .lhs_type = procedure.return_type,
+                            .rhs_type = expr_type,
+                        },
+                    },
+                });
+
+                return error.TypeMismatch;
+            };
+        },
+        else => unreachable,
     }
 }
 
@@ -233,7 +396,7 @@ pub fn scopePop(self: *Sema) void {
 
     scope.identifiers.deinit(self.allocator);
 
-    self.scope_stack.items.len = 0;
+    self.scope_stack.items.len -= 1;
 }
 
 pub fn scopeDefine(
@@ -241,6 +404,7 @@ pub fn scopeDefine(
     ast: Ast,
     identifier_token: Ast.TokenIndex,
     type_index: TypeIndex,
+    qualifier: ValueQualifier,
 ) !void {
     const scope = &self.scope_stack.items[self.scope_stack.items.len - 1];
 
@@ -264,6 +428,7 @@ pub fn scopeDefine(
     try scope.identifiers.put(self.allocator, identifier_string, .{
         .type_index = type_index,
         .token_index = identifier_token,
+        .qualifier = qualifier,
     });
 }
 
@@ -287,9 +452,7 @@ pub fn scopeResolve(self: *Sema, ast: Ast, identifier_token: Ast.TokenIndex) !*I
     return error.UndeclaredIdentifier;
 }
 
-pub fn resolveTypeFromTypeExpr(self: Sema, ast: Ast, type_expr: Ast.NodeIndex) !TypeIndex {
-    _ = self; // autofix
-
+pub fn resolveTypeFromTypeExpr(self: *Sema, ast: Ast, type_expr: Ast.NodeIndex) !TypeIndex {
     const type_expr_data = ast.dataFromNode(type_expr, .type_expr);
 
     const type_expr_token = type_expr_data.token;
@@ -302,13 +465,25 @@ pub fn resolveTypeFromTypeExpr(self: Sema, ast: Ast, type_expr: Ast.NodeIndex) !
         .keyword_float => .float,
         .keyword_bool => .bool,
         .keyword_void => .void,
+        .identifier => {
+            const type_index = self.type_map.get(ast.tokenString(type_expr_token)) orelse {
+                try self.errors.append(self.allocator, .{
+                    .tag = .undeclared_identifier,
+                    .token = type_expr_token,
+                });
+
+                return error.UndeclaredIdentifier;
+            };
+
+            return type_index;
+        },
         else => unreachable,
     };
 }
 
 pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !TypeIndex {
     switch (expression.tag) {
-        .expression_literal_boolean => return .bool,
+        .expression_literal_boolean => return .literal_bool,
         .expression_literal_number => {
             const number_literal_data: Ast.Node.ExpressionLiteralNumber = ast.dataFromNode(expression, .expression_literal_number);
 
@@ -365,9 +540,48 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
         },
         .expression_binary_eql,
         .expression_binary_neql,
+        .expression_binary_lt,
+        .expression_binary_gt,
         .expression_binary_leql,
         .expression_binary_geql,
-        => return .bool,
+        => {
+            const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_add);
+
+            const lhs_type = try self.resolveTypeFromExpression(ast, binary_expr.left);
+            const rhs_type = try self.resolveTypeFromExpression(ast, binary_expr.right);
+
+            const comparison_type = self.coerceTypeBinaryOp(ast, lhs_type, rhs_type) orelse {
+                try self.errors.append(self.allocator, .{
+                    .tag = .type_mismatch,
+                    .token = binary_expr.op_token,
+                    .data = .{
+                        .type_mismatch = .{
+                            .lhs_type = lhs_type,
+                            .rhs_type = rhs_type,
+                        },
+                    },
+                });
+
+                return error.TypeMismatch;
+            };
+
+            if (!comparison_type.isOperatorDefined(expression.tag)) {
+                try self.errors.append(self.allocator, .{
+                    .tag = .type_incompatibility,
+                    .token = binary_expr.op_token,
+                    .data = .{
+                        .type_incompatibility = .{
+                            .lhs_type = lhs_type,
+                            .rhs_type = rhs_type,
+                        },
+                    },
+                });
+
+                return error.TypeIncompatibilty;
+            }
+
+            return .bool;
+        },
         .expression_binary_add,
         .expression_binary_sub,
         .expression_binary_mul,
@@ -393,6 +607,75 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                 return error.TypeMismatch;
             };
 
+            if (!resultant_type.isOperatorDefined(expression.tag)) {
+                try self.errors.append(self.allocator, .{
+                    .tag = .type_incompatibility,
+                    .token = binary_expr.op_token,
+                    .data = .{
+                        .type_incompatibility = .{
+                            .lhs_type = lhs_type,
+                            .rhs_type = rhs_type,
+                        },
+                    },
+                });
+
+                return error.TypeIncompatibilty;
+            }
+
+            return resultant_type;
+        },
+        .expression_binary_assign,
+        .expression_binary_assign_add,
+        .expression_binary_assign_sub,
+        .expression_binary_assign_mul,
+        .expression_binary_assign_div,
+        => {
+            const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_add);
+
+            const assignable = try self.isExpressionAssignable(ast, binary_expr.left);
+
+            if (!assignable) {
+                try self.errors.append(self.allocator, .{
+                    .tag = .modified_const,
+                    .token = binary_expr.op_token,
+                });
+
+                return error.ModifiedConstant;
+            }
+
+            const lhs_type = try self.resolveTypeFromExpression(ast, binary_expr.left);
+            const rhs_type = try self.resolveTypeFromExpression(ast, binary_expr.right);
+
+            const resultant_type = self.coerceTypeAssign(ast, lhs_type, rhs_type) orelse {
+                try self.errors.append(self.allocator, .{
+                    .tag = .type_mismatch,
+                    .token = binary_expr.op_token,
+                    .data = .{
+                        .type_mismatch = .{
+                            .lhs_type = lhs_type,
+                            .rhs_type = rhs_type,
+                        },
+                    },
+                });
+
+                return error.TypeMismatch;
+            };
+
+            if (!resultant_type.isOperatorDefined(expression.tag)) {
+                try self.errors.append(self.allocator, .{
+                    .tag = .type_incompatibility,
+                    .token = binary_expr.op_token,
+                    .data = .{
+                        .type_incompatibility = .{
+                            .lhs_type = lhs_type,
+                            .rhs_type = rhs_type,
+                        },
+                    },
+                });
+
+                return error.TypeIncompatibilty;
+            }
+
             return resultant_type;
         },
         .expression_identifier => {
@@ -416,6 +699,20 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
     }
 }
 
+///Returns true if expression is an l-value
+pub fn isExpressionAssignable(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !bool {
+    switch (expression.tag) {
+        .expression_identifier => {
+            const identifier_expression: Ast.Node.Identifier = ast.dataFromNode(expression, .expression_identifier);
+
+            const identifier = try self.scopeResolve(ast, identifier_expression.token);
+
+            return identifier.qualifier != .constant;
+        },
+        else => return false,
+    }
+}
+
 pub fn coerceTypeAssign(self: Sema, ast: Ast, lhs: TypeIndex, rhs: TypeIndex) ?TypeIndex {
     _ = self; // autofix
     _ = ast; // autofix
@@ -426,22 +723,36 @@ pub fn coerceTypeAssign(self: Sema, ast: Ast, lhs: TypeIndex, rhs: TypeIndex) ?T
 
     switch (lhs) {
         .int => {
-            if (rhs == .literal_int or rhs == .literal_uint) {
-                return .int;
+            switch (rhs) {
+                .literal_int,
+                .literal_uint,
+                => return .int,
+                else => {},
             }
         },
         .uint => {
-            if (rhs == .literal_uint) {
-                return .uint;
+            switch (rhs) {
+                .literal_uint,
+                => return .uint,
+                else => {},
             }
         },
         .float => {
-            if (rhs == .literal_int or rhs == .literal_uint) {
-                return .float;
+            switch (rhs) {
+                .uint,
+                .int,
+                .literal_int,
+                .literal_uint,
+                .literal_float,
+                => return .float,
+                else => {},
             }
-
-            if (rhs == .literal_float) {
-                return .float;
+        },
+        .bool => {
+            switch (rhs) {
+                .literal_bool,
+                => return .bool,
+                else => {},
             }
         },
         else => {},
@@ -488,6 +799,7 @@ pub fn coerceTypeBinaryOp(self: Sema, ast: Ast, lhs: TypeIndex, rhs: TypeIndex) 
             switch (rhs) {
                 .literal_uint,
                 => return .uint,
+                .literal_int => return .int,
                 .literal_float,
                 .float,
                 => return .float,
@@ -518,50 +830,114 @@ pub fn coerceTypeBinaryOp(self: Sema, ast: Ast, lhs: TypeIndex, rhs: TypeIndex) 
                 else => {},
             }
         },
+        .literal_bool => {
+            switch (rhs) {
+                .bool => return .bool,
+                else => {},
+            }
+        },
+        .bool => {
+            switch (rhs) {
+                .literal_bool => return .bool,
+                else => {},
+            }
+        },
         else => {},
     }
 
     return null;
 }
 
-pub fn typeName(self: Sema, type_index: TypeIndex) []const u8 {
-    _ = self; // autofix
+pub fn typeName(self: Sema, ast: Ast, type_index: TypeIndex) []const u8 {
     if (type_index.toArrayIndex() == null) {
         return @tagName(type_index);
     }
 
-    unreachable;
+    const type_data = &self.types.items[type_index.toArrayIndex().?];
+
+    switch (type_data.*) {
+        .@"struct" => |struct_data| {
+            return ast.tokenString(struct_data.name);
+        },
+    }
 }
 
 pub const TypeIndex = enum(u32) {
     null = 0,
     void,
-    uint,
+
     int,
+    uint,
     float,
     bool,
 
     literal_int,
     literal_uint,
     literal_float,
+    literal_bool,
 
     _,
 
+    pub const array_index_begin: u32 = @intFromEnum(@This().literal_bool) + 1;
+
+    pub fn fromArrayIndex(array_index: usize) TypeIndex {
+        const integer = array_index_begin + array_index;
+
+        return @enumFromInt(integer);
+    }
+
     pub fn toArrayIndex(type_index: TypeIndex) ?usize {
         const integer = @intFromEnum(type_index);
-        const offset = @intFromEnum(TypeIndex.bool) + 1;
 
-        if (integer < offset) {
+        if (integer < array_index_begin) {
             return null;
         }
 
-        return integer - offset;
+        return integer - array_index_begin;
+    }
+
+    pub fn isOperatorDefined(self: TypeIndex, tag: Ast.Node.Tag) bool {
+        switch (tag) {
+            .expression_binary_add,
+            .expression_binary_sub,
+            .expression_binary_mul,
+            .expression_binary_div,
+            .expression_binary_assign_add,
+            .expression_binary_assign_sub,
+            .expression_binary_assign_mul,
+            .expression_binary_assign_div,
+            .expression_binary_lt,
+            .expression_binary_gt,
+            .expression_binary_leql,
+            .expression_binary_geql,
+            => {
+                return switch (self) {
+                    .bool,
+                    .literal_bool,
+                    .void,
+                    .null,
+                    _,
+                    => false,
+                    else => true,
+                };
+            },
+            .expression_binary_assign,
+            .expression_binary_eql,
+            .expression_binary_neql,
+            => return switch (self) {
+                .void,
+                .null,
+                => false,
+                else => true,
+            },
+            else => return false,
+        }
     }
 };
 
 const std = @import("std");
 const Ast = @import("Ast.zig");
 const spirv = @import("../spirv.zig");
-const Sema = @This();
 const token_map = @import("token_map.zig");
 const Token = @import("Tokenizer.zig").Token;
+const Sema = @This();

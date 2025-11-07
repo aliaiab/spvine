@@ -5,23 +5,23 @@
 
 #define NUM 0
 
-#if NUM
-#    include "simple.vert.glsl"
-#    error Six is not zero!
-#endif
+// #if NUM
+// #    include "simple.vert.glsl"
+// #    error Six is not zero!
+// #endif
 
 //expanded as: 'typedef' ^'float' 'uint'
 // typedef f64 double
 
 //Fused multiply-add
-f32 fmadd(in const f32 a, f32 b, f32 c) { //hello from comment!
+f32 fmadd(const f32 a, const f32 b, const f32 c) { //hello from comment!
     return a * c + c;
 }
 
 #define CONSTANT_FIVE
 // #define FMADD(a, b) fmadd(a, b, b + CONSTANT_FIVE);
 
-bool vertex_main(u32 z, u32 w, u32 k);
+f32 vertex_main(u32 z, u32 w, u32 k);
 
 #if 0
 //Vertex main
@@ -69,15 +69,50 @@ u32 vertex_main(u32 z, u32 w, u32 k) {
 }
 #endif
 
-uint forward_decl(uint x, uint y);
+f32 forward_decl(uint x, uint y);
+
+struct Light {
+    f32 pos_x;
+    f32 pos_y;
+};
+
+#
+
+#if 1
+
+#
 
 void main() {
-    u32 c = fmadd(2, 3, 3);
+    return 1;
+}
+
+f32 sus(f32 c) {
+    // f32 c = fmadd(2, 3, 3);
 
     // int c = 3;
-    u32 v = c - 1;
+    // f32 v = c - 1;
+    f32 v = 0;
+    v = (0 + 3 * 4 * (5 / (3 + 4)));
 
-    v += vertex_main(5, 3 * v + 4, 4);
-    v *= forward_decl(v, v * v + v);
+    uint x = fmadd(1, 2, 3);
+    // uint y = 0.7;
+
+    // #if 0
+    if (x == main()) {
+        v += c;
+
+        int v = 0;
+
+        int w = 0;
+    }
+    // #endif
+
+    c = v = 2;
+
+    // v += vertex_main(5, 3 * v + 4, 4);
+    // v *= forward_decl(v, v * v + v);
     v += 1 - v * 5;
+
+    return c;
 }
+#endif

@@ -21,6 +21,15 @@ pub fn deinit(self: *ExpandingTokenizer) void {
     self.* = undefined;
 }
 
+pub const Token2 = packed struct(u64) {
+    string_start: u32,
+    tag: Tokenizer.Token.Tag,
+    ///This is the spec defined limit for identifiers, which are the longest tokens
+    string_length: u10,
+    ///Index into the file table, specifies which included file the token is from
+    file_index: u14,
+};
+
 ///TODO: remove the need to store tokens entirely, by calling the tokenizer during parsing
 pub fn tokenize(
     self: *ExpandingTokenizer,

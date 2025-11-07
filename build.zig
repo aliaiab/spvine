@@ -1,13 +1,22 @@
 pub fn build(builder: *std.Build) void {
     const target = builder.standardTargetOptions(.{});
-
     const optimize = builder.standardOptimizeOption(.{});
+
+    const check = builder.step("check", "Check if the project compiles");
 
     const spvine_module = builder.addModule("spvine", .{
         .root_source_file = builder.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
+
+    const exe_check = builder.addExecutable(.{
+        .name = "checked_bin",
+        .root_module = spvine_module,
+        .use_llvm = false,
+    });
+
+    check.dependOn(&exe_check.step);
 
     const exe = builder.addExecutable(.{
         .name = "spvine",

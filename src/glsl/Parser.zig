@@ -41,9 +41,6 @@ pub fn deinit(self: *Parser) void {
 
 ///Root parse node
 pub fn parse(self: *Parser) !void {
-    std.log.info("begin: {s}", .{@src().fn_name});
-    defer std.log.info("end: {s}", .{@src().fn_name});
-
     var state: enum {
         start,
         directive,
@@ -76,7 +73,9 @@ pub fn parse(self: *Parser) !void {
                     _ = self.nextToken();
                 },
                 .keyword_struct => {
-                    _ = try self.parseStruct();
+                    const struct_def = try self.parseStruct();
+
+                    try root_nodes.append(self.allocator, struct_def);
                 },
                 .keyword_void,
                 .keyword_double,
@@ -110,29 +109,39 @@ pub fn parse(self: *Parser) !void {
 }
 
 pub fn parseStruct(self: *Parser) !Ast.NodeIndex {
-    std.log.info("begin: {s}", .{@src().fn_name});
-    defer std.log.info("end: {s}", .{@src().fn_name});
-
-    const node_index = try self.reserveNode(.procedure);
+    var node_index = try self.reserveNode(.struct_definition);
     errdefer self.unreserveNode(node_index);
 
-    const struct_keyword = try self.expectToken(.keyword_struct);
-    _ = struct_keyword; // autofix
+    _ = try self.expectToken(.keyword_struct);
 
     const struct_name_identifier = try self.expectToken(.identifier);
-    _ = struct_name_identifier; // autofix
 
     _ = try self.expectToken(.left_brace);
 
+    var field_nodes: std.ArrayList(Ast.NodeIndex) = .{};
+    defer field_nodes.deinit(self.allocator);
+
     while (self.peekTokenTag().? != .right_brace) {
         const field_type = try self.parseTypeExpr();
-        _ = field_type; // autofix
 
         const field_name = try self.expectToken(.identifier);
-        _ = field_name; // autofix
+
+        var struct_field_node = try self.reserveNode(.struct_field);
+
+        try self.nodeSetData(&struct_field_node, .struct_field, .{
+            .name = field_name,
+            .type_expr = field_type,
+        });
+
+        try field_nodes.append(self.allocator, struct_field_node);
 
         _ = try self.expectToken(.semicolon);
     }
+
+    try self.nodeSetData(&node_index, .struct_definition, .{
+        .name = struct_name_identifier,
+        .fields = try self.allocator.dupe(Ast.NodeIndex, field_nodes.items),
+    });
 
     _ = try self.expectToken(.right_brace);
     _ = try self.expectToken(.semicolon);
@@ -204,6 +213,21 @@ pub fn parseParam(self: *Parser) !Ast.NodeIndex {
     var node = try self.reserveNode(.param_expr);
     errdefer self.unreserveNode(node);
 
+    const qualifier: Token.Tag = self.eatVariableQualifier();
+
+    const type_expr = try self.parseTypeExpr();
+    const param_identifier = try self.expectToken(.identifier);
+
+    try self.nodeSetData(&node, .param_expr, .{
+        .type_expr = type_expr,
+        .name = param_identifier,
+        .qualifier = qualifier,
+    });
+
+    return node;
+}
+
+pub fn eatVariableQualifier(self: *Parser) Token.Tag {
     var qualifier: Token.Tag = .keyword_in;
 
     const first_in_qualifier = self.eatToken(.keyword_in);
@@ -225,16 +249,7 @@ pub fn parseParam(self: *Parser) !Ast.NodeIndex {
         _ = self.eatToken(.keyword_in);
     }
 
-    const type_expr = try self.parseTypeExpr();
-    const param_identifier = try self.expectToken(.identifier);
-
-    try self.nodeSetData(&node, .param_expr, .{
-        .type_expr = type_expr,
-        .name = param_identifier,
-        .qualifier = qualifier,
-    });
-
-    return node;
+    return qualifier;
 }
 
 pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
@@ -251,7 +266,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
             while (self.peekTokenTag().? != .right_brace) {
                 const statement = try self.parseStatement();
 
-                if (statement.isNil()) continue;
+                if (statement == Ast.NodeIndex.nil) continue;
 
                 try statements.append(self.allocator, statement);
             }
@@ -264,6 +279,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
 
             return node;
         },
+        .keyword_const,
         .keyword_float,
         .keyword_uint,
         .keyword_int,
@@ -272,6 +288,8 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
         => {
             var node = try self.reserveNode(.statement_var_init);
             errdefer self.unreserveNode(node);
+
+            const qualifier = self.eatVariableQualifier();
 
             const type_expr = try self.parseTypeExpr();
 
@@ -284,11 +302,13 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
                     .type_expr = type_expr,
                     .identifier = variable_name,
                     .expression = expression,
+                    .qualifier = qualifier,
                 });
             } else {
                 try self.nodeSetData(&node, .statement_var_init, .{
                     .type_expr = type_expr,
                     .identifier = variable_name,
+                    .qualifier = qualifier,
                     .expression = Ast.NodeIndex.nil,
                 });
             }
@@ -312,7 +332,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
             return Ast.NodeIndex.nil;
         },
         .keyword_if => {
-            _ = self.nextToken();
+            const if_token = try self.expectToken(.keyword_if);
 
             var node = try self.reserveNode(.statement_if);
             errdefer self.unreserveNode(node);
@@ -334,6 +354,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
             }
 
             try self.nodeSetData(&node, .statement_if, .{
+                .if_token = if_token,
                 .condition_expression = cond_expr,
                 .taken_statement = taken_statment,
                 .not_taken_statement = not_taken_statment,
@@ -342,7 +363,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
             return node;
         },
         .keyword_return => {
-            _ = self.nextToken();
+            const keyword_return = self.nextToken().?;
 
             var node = try self.reserveNode(.statement_return);
             errdefer self.unreserveNode(node);
@@ -357,6 +378,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
 
             try self.nodeSetData(&node, .statement_return, .{
                 .expression = expression,
+                .return_token = keyword_return,
             });
 
             return node;
@@ -382,7 +404,7 @@ pub fn parseExpression(
 
     while (true) {
         var node = Ast.NodeIndex.nil;
-        errdefer if (!node.isNil()) self.unreserveNode(node);
+        errdefer if (node != Ast.NodeIndex.nil) self.unreserveNode(node);
 
         const binary = struct {
             pub inline fn getPrecedence(comptime node_tag: Ast.Node.Tag) i32 {
@@ -446,7 +468,7 @@ pub fn parseExpression(
         switch (self.peekTokenTag().?) {
             .literal_number,
             => {
-                if (!lhs.isNil() and !binary.isBinaryExpression(self.previousTokenTag())) {
+                if (lhs != Ast.NodeIndex.nil and !binary.isBinaryExpression(self.previousTokenTag())) {
                     return self.unexpectedToken();
                 }
 
@@ -461,7 +483,7 @@ pub fn parseExpression(
             .keyword_true,
             .keyword_false,
             => {
-                if (!lhs.isNil() and !binary.isBinaryExpression(self.previousTokenTag())) {
+                if (lhs != Ast.NodeIndex.nil and !binary.isBinaryExpression(self.previousTokenTag())) {
                     return self.unexpectedToken();
                 }
 
@@ -474,7 +496,7 @@ pub fn parseExpression(
                 });
             },
             .identifier => {
-                if (!lhs.isNil() and !binary.isBinaryExpression(self.previousTokenTag())) {
+                if (lhs != Ast.NodeIndex.nil and !binary.isBinaryExpression(self.previousTokenTag())) {
                     return self.unexpectedToken();
                 }
 
@@ -565,6 +587,7 @@ pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
         .keyword_vec3,
         .keyword_vec4,
         .keyword_bool,
+        .identifier,
         => {
             var node = try self.reserveNode(.type_expr);
             errdefer self.unreserveNode(node);

@@ -29,7 +29,7 @@ pub fn parse(
     errdefer tokenizer.deinit();
 
     var errors: std.ArrayList(Error) = .{};
-    // errdefer errors.deinit(allocator);
+    errdefer errors.deinit(allocator);
 
     try tokenizer.tokenize(&token_list, &errors);
 
@@ -120,7 +120,15 @@ pub const Error = struct {
             ///The identifier of the original definition
             definition_identifier: Ast.TokenIndex,
         },
+        modified_const: struct {
+            value_assigned_to: Ast.NodeIndex,
+            assignment: Ast.NodeIndex,
+        },
         type_mismatch: struct {
+            lhs_type: Sema.TypeIndex,
+            rhs_type: Sema.TypeIndex,
+        },
+        type_incompatibility: struct {
             lhs_type: Sema.TypeIndex,
             rhs_type: Sema.TypeIndex,
         },
@@ -137,7 +145,9 @@ pub const Error = struct {
         //Semantic errors
         undeclared_identifier,
         identifier_redefined,
+        modified_const,
         type_mismatch,
+        type_incompatibility,
     };
 };
 
@@ -170,16 +180,14 @@ pub const NodeIndex = packed struct(u32) {
         .tag = @enumFromInt(0),
         .index = 0,
     };
-
-    pub inline fn isNil(self: NodeIndex) bool {
-        return @as(u32, @bitCast(self)) == 0;
-    }
 };
 
 pub const Node = struct {
     pub const Tag = enum(u5) {
         type_expr,
         procedure,
+        struct_definition,
+        struct_field,
         param_list,
         param_expr,
         statement_block,
@@ -215,6 +223,8 @@ pub const Node = struct {
     pub const Data = union(Tag) {
         type_expr: TypeExpr,
         procedure: Procedure,
+        struct_definition: StructDefinition,
+        struct_field: StructField,
         param_list: ParamList,
         param_expr: ParamExpr,
         statement_block: StatementBlock,
@@ -245,6 +255,16 @@ pub const Node = struct {
         expression_binary_geql: BinaryExpression,
         expression_binary_proc_call: BinaryExpression,
         expression_binary_comma: BinaryExpression,
+    };
+
+    pub const StructDefinition = struct {
+        name: TokenIndex,
+        fields: []const NodeIndex,
+    };
+
+    pub const StructField = struct {
+        type_expr: NodeIndex,
+        name: TokenIndex,
     };
 
     pub const Identifier = struct {
@@ -287,18 +307,21 @@ pub const Node = struct {
     };
 
     pub const StatementIf = struct {
+        if_token: TokenIndex,
         condition_expression: NodeIndex,
         taken_statement: NodeIndex,
         not_taken_statement: NodeIndex,
     };
 
     pub const StatementReturn = struct {
+        return_token: TokenIndex,
         expression: NodeIndex,
     };
 
     pub const StatementVarInit = struct {
-        type_expr: NodeIndex,
         identifier: TokenIndex,
+        qualifier: Token.Tag,
+        type_expr: NodeIndex,
         expression: NodeIndex,
     };
 
