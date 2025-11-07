@@ -6,6 +6,7 @@ struct StrTest {
     int c;
 };
 
+#define u32 uint
 #define i32 int
 #define f32 float
 
@@ -13,24 +14,21 @@ struct StrTest {
 #error Sus
 #endif
 
-i32 a\
-d\
-d(i32 a, i32 b);
+#define ADD ad\
+d
 
-f32 add(f32 a, f32 b);
-vo\
-id main();
+u32 ADD(f32 a, f32 b);
 
-//x##y => >tok_chain_start x, y tok_chain_end
+// //x##y => >tok_chain_start x, y tok_chain_end
 
-// typedef int32 int;
+// // typedef int32 int;
 
-\
+// \
 
-int add(int a, int b) {
+int mul(int a, int b) {
     // int x;
 
-    return 3;
+    return add(a, b);
 }
 
 f32 add(f32 a, f32 b) {

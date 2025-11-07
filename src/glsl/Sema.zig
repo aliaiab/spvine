@@ -298,20 +298,23 @@ pub fn analyseStatement(
 
             const condition_type = try self.resolveTypeFromExpression(ast, statement_if.condition_expression);
 
-            _ = self.coerceTypeAssign(ast, .bool, condition_type) orelse {
-                try self.errors.append(self.allocator, .{
-                    .tag = .type_mismatch,
-                    //This will point to the token within the if statement
-                    .token = statement_if.if_token + 2,
-                    .data = .{
-                        .type_mismatch = .{
-                            .lhs_type = .bool,
-                            .rhs_type = condition_type,
+            _ = switch (coerceType(.bool, condition_type)) {
+                .null => {
+                    try self.errors.append(self.allocator, .{
+                        .tag = .type_mismatch,
+                        //This will point to the token within the if statement
+                        .token = statement_if.if_token + 2,
+                        .data = .{
+                            .type_mismatch = .{
+                                .lhs_type = .bool,
+                                .rhs_type = condition_type,
+                            },
                         },
-                    },
-                });
+                    });
 
-                return error.TypeMismatch;
+                    return error.TypeMismatch;
+                },
+                else => |res| res,
             };
 
             try self.analyseStatement(ast, procedure, statement_if.taken_statement, .{});
@@ -338,21 +341,24 @@ pub fn analyseStatement(
         .statement_return => {
             const statement_return: Ast.Node.StatementReturn = ast.dataFromNode(statement_node, .statement_return);
 
-            const expr_type = try self.resolveTypeFromExpression(ast, statement_return.expression);
+            const expr_type = if (statement_return.expression != Ast.NodeIndex.nil) try self.resolveTypeFromExpression(ast, statement_return.expression) else .void;
 
-            _ = self.coerceTypeAssign(ast, procedure.return_type, expr_type) orelse {
-                try self.errors.append(self.allocator, .{
-                    .tag = .type_mismatch,
-                    .token = statement_return.return_token,
-                    .data = .{
-                        .type_mismatch = .{
-                            .lhs_type = procedure.return_type,
-                            .rhs_type = expr_type,
+            _ = switch (coerceType(procedure.return_type, expr_type)) {
+                .null => {
+                    try self.errors.append(self.allocator, .{
+                        .tag = .type_mismatch,
+                        .token = statement_return.return_token,
+                        .data = .{
+                            .type_mismatch = .{
+                                .lhs_type = procedure.return_type,
+                                .rhs_type = expr_type,
+                            },
                         },
-                    },
-                });
+                    });
 
-                return error.TypeMismatch;
+                    return error.TypeMismatch;
+                },
+                else => |res| res,
             };
         },
         else => unreachable,
@@ -520,20 +526,23 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
             const type_index = try self.resolveTypeFromTypeExpr(ast, var_init.type_expr);
             const expression_type_index = try self.resolveTypeFromExpression(ast, var_init.expression);
 
-            const resultant_type = self.coerceTypeAssign(ast, type_index, expression_type_index) orelse {
-                try self.errors.append(self.allocator, .{
-                    .tag = .type_mismatch,
-                    //identifier + 1 points to the = symbol
-                    .token = var_init.identifier + 1,
-                    .data = .{
-                        .type_mismatch = .{
-                            .lhs_type = type_index,
-                            .rhs_type = expression_type_index,
+            const resultant_type = switch (coerceTypeAssign(type_index, expression_type_index)) {
+                .null => {
+                    try self.errors.append(self.allocator, .{
+                        .tag = .type_mismatch,
+                        //identifier + 1 points to the = symbol
+                        .token = var_init.identifier + 1,
+                        .data = .{
+                            .type_mismatch = .{
+                                .lhs_type = type_index,
+                                .rhs_type = expression_type_index,
+                            },
                         },
-                    },
-                });
+                    });
 
-                return error.TypeMismatch;
+                    return error.TypeMismatch;
+                },
+                else => |res| res,
             };
 
             return resultant_type;
@@ -550,19 +559,22 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
             const lhs_type = try self.resolveTypeFromExpression(ast, binary_expr.left);
             const rhs_type = try self.resolveTypeFromExpression(ast, binary_expr.right);
 
-            const comparison_type = self.coerceTypeBinaryOp(ast, lhs_type, rhs_type) orelse {
-                try self.errors.append(self.allocator, .{
-                    .tag = .type_mismatch,
-                    .token = binary_expr.op_token,
-                    .data = .{
-                        .type_mismatch = .{
-                            .lhs_type = lhs_type,
-                            .rhs_type = rhs_type,
+            const comparison_type = switch (coerceType(lhs_type, rhs_type)) {
+                .null => {
+                    try self.errors.append(self.allocator, .{
+                        .tag = .type_mismatch,
+                        .token = binary_expr.op_token,
+                        .data = .{
+                            .type_mismatch = .{
+                                .lhs_type = lhs_type,
+                                .rhs_type = rhs_type,
+                            },
                         },
-                    },
-                });
+                    });
 
-                return error.TypeMismatch;
+                    return error.TypeMismatch;
+                },
+                else => |res| res,
             };
 
             if (!comparison_type.isOperatorDefined(expression.tag)) {
@@ -592,19 +604,22 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
             const lhs_type = try self.resolveTypeFromExpression(ast, binary_expr.left);
             const rhs_type = try self.resolveTypeFromExpression(ast, binary_expr.right);
 
-            const resultant_type = self.coerceTypeBinaryOp(ast, lhs_type, rhs_type) orelse {
-                try self.errors.append(self.allocator, .{
-                    .tag = .type_mismatch,
-                    .token = binary_expr.op_token,
-                    .data = .{
-                        .type_mismatch = .{
-                            .lhs_type = lhs_type,
-                            .rhs_type = rhs_type,
+            const resultant_type = switch (coerceType(lhs_type, rhs_type)) {
+                .null => {
+                    try self.errors.append(self.allocator, .{
+                        .tag = .type_mismatch,
+                        .token = binary_expr.op_token,
+                        .data = .{
+                            .type_mismatch = .{
+                                .lhs_type = lhs_type,
+                                .rhs_type = rhs_type,
+                            },
                         },
-                    },
-                });
+                    });
 
-                return error.TypeMismatch;
+                    return error.TypeMismatch;
+                },
+                else => |res| res,
             };
 
             if (!resultant_type.isOperatorDefined(expression.tag)) {
@@ -646,19 +661,22 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
             const lhs_type = try self.resolveTypeFromExpression(ast, binary_expr.left);
             const rhs_type = try self.resolveTypeFromExpression(ast, binary_expr.right);
 
-            const resultant_type = self.coerceTypeAssign(ast, lhs_type, rhs_type) orelse {
-                try self.errors.append(self.allocator, .{
-                    .tag = .type_mismatch,
-                    .token = binary_expr.op_token,
-                    .data = .{
-                        .type_mismatch = .{
-                            .lhs_type = lhs_type,
-                            .rhs_type = rhs_type,
+            const resultant_type = switch (coerceTypeAssign(lhs_type, rhs_type)) {
+                .null => {
+                    try self.errors.append(self.allocator, .{
+                        .tag = .type_mismatch,
+                        .token = binary_expr.op_token,
+                        .data = .{
+                            .type_mismatch = .{
+                                .lhs_type = lhs_type,
+                                .rhs_type = rhs_type,
+                            },
                         },
-                    },
-                });
+                    });
 
-                return error.TypeMismatch;
+                    return error.TypeMismatch;
+                },
+                else => |res| res,
             };
 
             if (!resultant_type.isOperatorDefined(expression.tag)) {
@@ -713,139 +731,63 @@ pub fn isExpressionAssignable(self: *Sema, ast: Ast, expression: Ast.NodeIndex) 
     }
 }
 
-pub fn coerceTypeAssign(self: Sema, ast: Ast, lhs: TypeIndex, rhs: TypeIndex) ?TypeIndex {
-    _ = self; // autofix
-    _ = ast; // autofix
+pub fn coerceTypeAssign(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
+    const result_type = coerceType(lhs, rhs);
+    const lhs_primitive: TypeIndex.PrimitiveNumericType = @bitCast(@intFromEnum(lhs));
+    const type_primitive: TypeIndex.PrimitiveNumericType = @bitCast(@intFromEnum(result_type));
 
-    if (lhs == rhs) {
-        return lhs;
+    if (lhs_primitive.scalar_type == .integer and type_primitive.scalar_type != .integer) {
+        return .null;
     }
 
-    switch (lhs) {
-        .int => {
-            switch (rhs) {
-                .literal_int,
-                .literal_uint,
-                => return .int,
-                else => {},
-            }
-        },
-        .uint => {
-            switch (rhs) {
-                .literal_uint,
-                => return .uint,
-                else => {},
-            }
-        },
-        .float => {
-            switch (rhs) {
-                .uint,
-                .int,
-                .literal_int,
-                .literal_uint,
-                .literal_float,
-                => return .float,
-                else => {},
-            }
-        },
-        .bool => {
-            switch (rhs) {
-                .literal_bool,
-                => return .bool,
-                else => {},
-            }
-        },
-        else => {},
-    }
-
-    return null;
+    return result_type;
 }
 
-pub fn coerceTypeBinaryOp(self: Sema, ast: Ast, lhs: TypeIndex, rhs: TypeIndex) ?TypeIndex {
-    _ = self; // autofix
-    _ = ast; // autofix
-
+pub fn coerceType(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
     if (lhs == rhs) {
         return lhs;
     }
 
-    switch (lhs) {
-        .int => {
-            switch (rhs) {
-                .literal_int,
-                .literal_uint,
-                .uint,
-                => return .int,
-                .literal_float,
-                .float,
-                => return .float,
-                else => {},
-            }
-        },
-        .literal_int => {
-            switch (rhs) {
-                .literal_uint,
-                => return .literal_int,
-                .int,
-                .uint,
-                => return .int,
-                .literal_float,
-                => return .literal_float,
-                .float => return .float,
-                else => {},
-            }
-        },
-        .uint => {
-            switch (rhs) {
-                .literal_uint,
-                => return .uint,
-                .literal_int => return .int,
-                .literal_float,
-                .float,
-                => return .float,
-                else => {},
-            }
-        },
-        .literal_uint => {
-            switch (rhs) {
-                .literal_int,
-                => return .literal_int,
-                .int,
-                => return .int,
-                .uint => return .uint,
-                .literal_float,
-                => return .literal_float,
-                .float => return .float,
-                else => {},
-            }
-        },
-        .float => {
-            switch (rhs) {
-                .literal_int,
-                .literal_uint,
-                .literal_float,
-                => {
-                    return .float;
-                },
-                else => {},
-            }
-        },
-        .literal_bool => {
-            switch (rhs) {
-                .bool => return .bool,
-                else => {},
-            }
-        },
-        .bool => {
-            switch (rhs) {
-                .literal_bool => return .bool,
-                else => {},
-            }
-        },
-        else => {},
+    if (lhs.toArrayIndex() != null or rhs.toArrayIndex() != null) {
+        return .null;
     }
 
-    return null;
+    const lhs_primitive: TypeIndex.PrimitiveNumericType = @bitCast(@intFromEnum(lhs));
+    const rhs_primitive: TypeIndex.PrimitiveNumericType = @bitCast(@intFromEnum(rhs));
+
+    if (lhs_primitive.linear_algebra_type != rhs_primitive.linear_algebra_type or
+        lhs_primitive.component_count != rhs_primitive.component_count)
+    {
+        return .null;
+    }
+
+    if (lhs_primitive.scalar_type == .bool or rhs_primitive.scalar_type == .bool) {
+        if (lhs_primitive.scalar_type != rhs_primitive.scalar_type) {
+            return .null;
+        }
+    }
+
+    var result_type: TypeIndex.PrimitiveNumericType = lhs_primitive;
+
+    result_type.literal = lhs_primitive.literal & rhs_primitive.literal;
+
+    if (lhs_primitive.null_or_void > 0 or rhs_primitive.null_or_void > 0) {
+        if (lhs == .void or rhs == .void) {
+            return .null;
+        }
+    }
+
+    if (lhs_primitive.scalar_type == .integer and rhs_primitive.scalar_type == .integer) {
+        result_type.sign = lhs_primitive.sign | rhs_primitive.sign;
+    } else {
+        const lhs_scalar_type_int: u2 = @intFromEnum(lhs_primitive.scalar_type);
+        const rhs_scalar_type_int: u2 = @intFromEnum(rhs_primitive.scalar_type);
+
+        result_type.sign = 0;
+        result_type.scalar_type = @enumFromInt(lhs_scalar_type_int | rhs_scalar_type_int);
+    }
+
+    return @enumFromInt(@as(u32, @bitCast(result_type)));
 }
 
 pub fn typeName(self: Sema, ast: Ast, type_index: TypeIndex) []const u8 {
@@ -863,22 +805,79 @@ pub fn typeName(self: Sema, ast: Ast, type_index: TypeIndex) []const u8 {
 }
 
 pub const TypeIndex = enum(u32) {
+    ///Used for tagging erroring types such that we don't contaminate future error messages with bad error checking
     null = 0,
     void,
 
-    int,
-    uint,
-    float,
-    bool,
+    uint = @bitCast(PrimitiveNumericType{
+        .sign = 0,
+        .component_count = 0,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .integer,
+    }),
+    int = @bitCast(PrimitiveNumericType{
+        .sign = 1,
+        .component_count = 0,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .integer,
+    }),
+    float = @bitCast(PrimitiveNumericType{
+        .sign = 0,
+        .component_count = 0,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .float,
+    }),
+    bool = @bitCast(PrimitiveNumericType{
+        .sign = 0,
+        .component_count = 0,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .bool,
+    }),
 
-    literal_int,
-    literal_uint,
-    literal_float,
-    literal_bool,
+    literal_uint = @bitCast(PrimitiveNumericType{
+        .sign = 0,
+        .component_count = 0,
+        .linear_algebra_type = .vector,
+        .literal = 1,
+        .scalar_type = .integer,
+    }),
+    literal_int = @bitCast(PrimitiveNumericType{
+        .sign = 1,
+        .component_count = 0,
+        .linear_algebra_type = .vector,
+        .literal = 1,
+        .scalar_type = .integer,
+    }),
+    literal_float = @bitCast(PrimitiveNumericType{
+        .sign = 0,
+        .component_count = 0,
+        .linear_algebra_type = .vector,
+        .literal = 1,
+        .scalar_type = .float,
+    }),
+    literal_bool = @bitCast(PrimitiveNumericType{
+        .sign = 0,
+        .component_count = 0,
+        .linear_algebra_type = .vector,
+        .literal = 1,
+        .scalar_type = .bool,
+    }),
 
     _,
 
-    pub const array_index_begin: u32 = @intFromEnum(@This().literal_bool) + 1;
+    pub const array_index_begin: u32 = @as(u32, @bitCast(
+        PrimitiveNumericType{
+            .literal = 1,
+            .sign = 1,
+            .scalar_type = @enumFromInt(3),
+            .linear_algebra_type = @enumFromInt(1),
+            .component_count = 1,
+        },
+    )) + 1;
 
     pub fn fromArrayIndex(array_index: usize) TypeIndex {
         const integer = array_index_begin + array_index;
@@ -911,15 +910,19 @@ pub const TypeIndex = enum(u32) {
             .expression_binary_leql,
             .expression_binary_geql,
             => {
-                return switch (self) {
-                    .bool,
-                    .literal_bool,
-                    .void,
-                    .null,
-                    _,
-                    => false,
-                    else => true,
-                };
+                if (self.toArrayIndex() != null) {
+                    return false;
+                }
+
+                const primitive_type: PrimitiveNumericType = @bitCast(@intFromEnum(self));
+
+                if (primitive_type.null_or_void != 0b11 or
+                    primitive_type.scalar_type == .bool)
+                {
+                    return false;
+                }
+
+                return true;
             },
             .expression_binary_assign,
             .expression_binary_eql,
@@ -933,6 +936,30 @@ pub const TypeIndex = enum(u32) {
             else => return false,
         }
     }
+
+    pub const PrimitiveNumericType = packed struct(u32) {
+        //Used to represent null and void
+        null_or_void: u2 = 0b11,
+        literal: u1,
+        sign: u1,
+        scalar_type: ScalarType,
+        linear_algebra_type: LinearAlgebraType,
+        ///For vectors and matricies
+        component_count: u2,
+        padding1: u23 = 0,
+
+        pub const ScalarType = enum(u2) {
+            integer = 0b00,
+            bool = 0b01,
+            float = 0b10,
+            double = 0b11,
+        };
+
+        pub const LinearAlgebraType = enum(u1) {
+            vector,
+            matrix,
+        };
+    };
 };
 
 const std = @import("std");

@@ -327,9 +327,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
             //TODO: what to do with string literals
             _ = self.nextToken();
 
-            std.log.err("String literals are not supported yet", .{});
-
-            return Ast.NodeIndex.nil;
+            @panic("unimplemented: string literals are not supported yet");
         },
         .keyword_if => {
             const if_token = try self.expectToken(.keyword_if);
