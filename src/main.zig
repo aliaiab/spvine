@@ -75,12 +75,17 @@ pub fn main() !void {
         std.debug.print("\n", .{});
     }
 
-    const spirv_air, const errors = try glsl.Sema.analyse(ast, allocator);
+    var sema: glsl.Sema = .{
+        .allocator = allocator,
+    };
+    defer sema.deinit(allocator);
+
+    const spirv_air, const errors = try sema.analyse(ast, allocator);
     defer allocator.free(errors);
     _ = spirv_air; // autofix
 
     if (errors.len != 0) {
-        printErrors(test_glsl_path, ast, null, errors, stderr);
+        printErrors(test_glsl_path, ast, &sema, errors, stderr);
 
         return;
     }
@@ -93,7 +98,6 @@ fn printErrors(
     errors: []const Ast.Error,
     stderr: *std.Io.Writer,
 ) void {
-    _ = sema; // autofix
     for (errors) |error_value| {
         const is_same_line = ast.tokenLocation(error_value.token -| 1).line == ast.tokenLocation(error_value.token).line;
 
@@ -218,8 +222,28 @@ fn printErrors(
                     loc.column,
                     terminal_red,
                     color_end,
-                    @tagName(error_value.data.type_mismatch.rhs_type),
-                    @tagName(error_value.data.type_mismatch.lhs_type),
+                    sema.?.typeName(ast, error_value.data.type_mismatch.rhs_type),
+                    sema.?.typeName(ast, error_value.data.type_mismatch.lhs_type),
+                }) catch {};
+            },
+            .type_incompatibility => {
+                stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " incompatible types: '{s}' and '{s}'\n" ++ color_end, .{
+                    file_path,
+                    loc.line,
+                    loc.column,
+                    terminal_red,
+                    color_end,
+                    sema.?.typeName(ast, error_value.data.type_incompatibility.rhs_type),
+                    sema.?.typeName(ast, error_value.data.type_incompatibility.lhs_type),
+                }) catch {};
+            },
+            .modified_const => {
+                stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " cannot assign to a constant\n" ++ color_end, .{
+                    file_path,
+                    loc.line,
+                    loc.column,
+                    terminal_red,
+                    color_end,
                 }) catch {};
             },
         }
@@ -496,7 +520,7 @@ fn printAst(
 ) !void {
     const node_tag = node.tag;
 
-    if (node.isNil()) {
+    if (node == Ast.NodeIndex.nil) {
         return;
     }
 
@@ -588,7 +612,7 @@ fn printAst(
                     inline for (std.meta.fields(@TypeOf(node_data))) |payload_field| {
                         switch (payload_field.type) {
                             Ast.NodeIndex => {
-                                sub_sibling_count += @intFromBool(!@field(node_data, payload_field.name).isNil());
+                                sub_sibling_count += @intFromBool(@field(node_data, payload_field.name) != Ast.NodeIndex.nil);
                             },
                             Ast.TokenIndex,
                             Tokenizer.Token.Tag,
@@ -664,7 +688,7 @@ fn printAst(
 
                         switch (payload_field.type) {
                             Ast.NodeIndex => {
-                                if (!field_value.isNil()) {
+                                if (field_value != Ast.NodeIndex.nil) {
                                     try printAst(
                                         gpa,
                                         ast,
