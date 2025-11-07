@@ -82,24 +82,36 @@ struct Light {
 
 #
 
-void main() {
-    return 1;
+Light sussy() {
+    // return 1;
+    return Light(2, 3);
 }
 
-f32 sus(f32 c) {
+void main() {}
+
+Light sus(f32 c) {
     // f32 c = fmadd(2, 3, 3);
+
+    // main f = 0;
 
     // int c = 3;
     // f32 v = c - 1;
-    f32 v = 0;
+    // u32 w = 1.3;
+    u32 v = 0;
+    // v += 0.3;
     v = (0 + 3 * 4 * (5 / (3 + 4)));
 
-    uint x = fmadd(1, 2, 3);
+    // uint x = fmadd(1, 2, 3);
+    int x = 0;
     // uint y = 0.7;
 
     // #if 0
-    if (x == main()) {
-        v += c;
+    uint is_bum = 0;
+
+    if (x == 1) {
+        // v += c;
+
+        is_bum += x;
 
         int v = 0;
 
@@ -107,7 +119,7 @@ f32 sus(f32 c) {
     }
     // #endif
 
-    c = v = 2;
+    // c = v = 2;
 
     // v += vertex_main(5, 3 * v + 4, 4);
     // v *= forward_decl(v, v * v + v);
