@@ -46,7 +46,7 @@ pub fn tokenize(
             .invalid => {
                 try errors.append(self.allocator, .{
                     .tag = .invalid_token,
-                    .token = @enumFromInt(@as(u32, @intCast(tokens.len))),
+                    .anchor = .{ .token = @enumFromInt(@as(u32, @intCast(tokens.len))) },
                 });
 
                 try tokens.append(self.allocator, token);
@@ -54,7 +54,7 @@ pub fn tokenize(
             .reserved_keyword => {
                 try errors.append(self.allocator, .{
                     .tag = .reserved_keyword_token,
-                    .token = @enumFromInt(@as(u32, @intCast(tokens.len))),
+                    .anchor = .{ .token = @enumFromInt(@as(u32, @intCast(tokens.len))) },
                 });
 
                 try tokens.append(self.allocator, token);
@@ -160,7 +160,7 @@ pub fn tokenize(
 
                 try errors.append(self.allocator, .{
                     .tag = .directive_error,
-                    .token = @enumFromInt(@as(u32, @intCast(tokens.len))),
+                    .anchor = .{ .token = @enumFromInt(@as(u32, @intCast(tokens.len))) },
                 });
 
                 try tokens.append(self.allocator, token);
@@ -182,7 +182,7 @@ pub fn tokenize(
 
                 try errors.append(self.allocator, .{
                     .tag = .unsupported_directive,
-                    .token = @enumFromInt(@as(u32, @intCast(tokens.len))),
+                    .anchor = .{ .token = @enumFromInt(@as(u32, @intCast(tokens.len))) },
                 });
 
                 try tokens.append(self.allocator, token);
