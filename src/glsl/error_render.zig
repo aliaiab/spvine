@@ -150,14 +150,14 @@ pub fn printErrors(
                 }) catch {};
             },
             .type_mismatch => {
-                writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " Type mismatch: cannot convert from type {s} to {s}\n" ++ color_end, .{
+                writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " Type mismatch: cannot convert from type '{s}' to '{s}'\n" ++ color_end, .{
                     file_path,
                     loc.line,
                     loc.column,
                     terminal_red,
                     color_end,
-                    sema.?.typeName(ast, error_value.data.type_mismatch.rhs_type),
-                    sema.?.typeName(ast, error_value.data.type_mismatch.lhs_type),
+                    typeDisplayName(sema.?, ast, error_value.data.type_mismatch.rhs_type),
+                    typeDisplayName(sema.?, ast, error_value.data.type_mismatch.lhs_type),
                 }) catch {};
             },
             .type_incompatibility => {
@@ -167,8 +167,8 @@ pub fn printErrors(
                     loc.column,
                     terminal_red,
                     color_end,
-                    sema.?.typeName(ast, error_value.data.type_incompatibility.rhs_type),
-                    sema.?.typeName(ast, error_value.data.type_incompatibility.lhs_type),
+                    typeDisplayName(sema.?, ast, error_value.data.type_incompatibility.rhs_type),
+                    typeDisplayName(sema.?, ast, error_value.data.type_incompatibility.lhs_type),
                 }) catch {};
             },
             .modified_const => {
@@ -205,6 +205,51 @@ pub fn printErrors(
                     }) catch {};
                 }
             },
+            .argument_count_out_of_range => {
+                const argument_count_out_of_range = error_value.data.argument_count_out_of_range;
+
+                writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold, .{
+                    file_path,
+                    loc.line,
+                    loc.column,
+                    terminal_red,
+                    color_end,
+                }) catch {};
+
+                if (argument_count_out_of_range.actual_argument_count < argument_count_out_of_range.expected_min_count) {
+                    writer.print(" too few arguments: ", .{}) catch {};
+                } else {
+                    writer.print(" too many arguments: ", .{}) catch {};
+                }
+
+                if (argument_count_out_of_range.expected_min_count == argument_count_out_of_range.expected_max_count) {
+                    writer.print("expected {}, found {}\n" ++ color_end, .{
+                        argument_count_out_of_range.expected_min_count,
+                        argument_count_out_of_range.actual_argument_count,
+                    }) catch {};
+                } else {
+                    if (argument_count_out_of_range.actual_argument_count < argument_count_out_of_range.expected_min_count) {
+                        writer.print("expected at least {}, found {}\n" ++ color_end, .{
+                            argument_count_out_of_range.expected_min_count,
+                            argument_count_out_of_range.actual_argument_count,
+                        }) catch {};
+                    } else {
+                        writer.print("expected at most {}, found {}\n" ++ color_end, .{
+                            argument_count_out_of_range.expected_max_count,
+                            argument_count_out_of_range.actual_argument_count,
+                        }) catch {};
+                    }
+                }
+            },
+            .no_matching_overload => {
+                writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " no matching function overload found\n" ++ color_end, .{
+                    file_path,
+                    loc.line,
+                    loc.column,
+                    terminal_red,
+                    color_end,
+                }) catch {};
+            },
         }
 
         var tokenizer = Tokenizer.init(ast.source[0 .. loc.line_end + 1]);
@@ -239,12 +284,12 @@ pub fn printErrors(
         }
 
         if (last_token != null and last_token.?.end != loc.line_end and last_token.?.tag != .directive_end) {
-            _ = writer.write(terminal_green) catch unreachable;
-            _ = writer.write(ast.source[last_token.?.end..loc.line_end]) catch unreachable;
-            _ = writer.write(color_end) catch unreachable;
+            _ = writer.writeAll(terminal_green) catch unreachable;
+            _ = writer.writeAll(ast.source[last_token.?.end..loc.line_end]) catch unreachable;
+            _ = writer.writeAll(color_end) catch unreachable;
         }
 
-        _ = writer.write("\n") catch unreachable;
+        _ = writer.writeAll("\n") catch unreachable;
 
         const cursor_start = error_anchor_start - loc.line_start;
 
@@ -435,6 +480,21 @@ fn printAstToken(
             }) catch {};
         },
     }
+}
+
+fn typeDisplayName(self: *Sema, ast: Ast, type_index: Sema.TypeIndex) []const u8 {
+    var canonical_type: Sema.TypeIndex = type_index;
+
+    if (canonical_type.toArrayIndex() == null) {
+        var primitive_type: Sema.TypeIndex.PrimitiveNumericType = @bitCast(@intFromEnum(canonical_type));
+
+        //literal_* types should be displayed as just their runtime type for clarity
+        primitive_type.literal = 0;
+
+        canonical_type = @enumFromInt(@as(u32, @bitCast(primitive_type)));
+    }
+
+    return self.typeName(ast, canonical_type);
 }
 
 const std = @import("std");
