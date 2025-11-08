@@ -142,6 +142,8 @@ fn nodeStringRecursive(
         .expression_binary_sub,
         .expression_binary_div,
         .expression_binary_mul,
+        .expression_binary_comma,
+        .expression_binary_proc_call,
         => {
             const binary_expr: Node.BinaryExpression = self.dataFromNode(node, .expression_binary_add);
 
@@ -168,7 +170,7 @@ fn nodeStringRecursive(
             maybe_token = identifier.token;
         },
         else => {
-            @panic("");
+            @panic(@tagName(node.tag));
         },
     }
 
@@ -215,6 +217,11 @@ pub const Error = struct {
             expected_argument_count: u32,
             actual_argument_count: u32,
         },
+        argument_count_out_of_range: struct {
+            expected_min_count: u32,
+            expected_max_count: u32,
+            actual_argument_count: u32,
+        },
     } = .{ .none = {} },
 
     pub const Tag = enum(u8) {
@@ -232,6 +239,8 @@ pub const Error = struct {
         type_mismatch,
         type_incompatibility,
         argument_count_mismatch,
+        argument_count_out_of_range,
+        no_matching_overload,
     };
 };
 

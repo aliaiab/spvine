@@ -69,8 +69,28 @@ u32 vertex_main(u32 z, u32 w, u32 k) {
 }
 #endif
 
-f32 forward_decl(uint x, uint y) {
+f32 forward_decl(uint x, uint y, uint z) {
     return 1;
+}
+
+#if 0
+f32 forward_decl(uint x, uint y, uint z) {
+    return 1;
+}
+#endif
+
+f32 forward_decl(uint x, uint y);
+
+f32 forward_decl(uint x, uint y) {
+    return 2;
+}
+
+f32 forward_decl(uint x, uint y) {
+    return 2;
+}
+
+f32 forward_decl(uint x, uint y, uint z, uint w) {
+    return x + y + z + (w + true);
 }
 
 struct Light {
@@ -82,10 +102,23 @@ struct Light {
 
 #
 
-Light sussy() {
+Light sussy(f32 c) {
     // return 1;
-    // return forward_decl(1, true);
-    return 1 + 2 - (1 * (3 + 1.3) + true);
+    uint d = 1;
+    float f = 3;
+
+    if (f > d) {
+        f += 3;
+    } else if (true) {
+        f += 5;
+        if (f < 0) {
+            f *= 3;
+        }
+    }
+
+    // return forward_decl(d * 3 + d * (d + d), d + 3, 2);
+    return forward_decl(1 + 3 * 5);
+    // return 1 + 2 - (1 * (3 + 1.3) + true);
 }
 
 #if 1
@@ -110,7 +143,7 @@ Light sus(f32 c) {
     // #if 0
     uint is_bum = 0;
 
-    if (x == 1) {
+    if (x > is_bum) {
         // v += c;
 
         is_bum += x;
@@ -130,3 +163,7 @@ Light sus(f32 c) {
     return c * 3 + 2;
 }
 #endif
+
+f32 sussyBakka(f32 c) {
+    return sus(c * 3) + sus(1) + sus(3.2);
+}

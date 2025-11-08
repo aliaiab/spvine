@@ -76,7 +76,7 @@ pub fn main() !void {
     }
 
     var sema: glsl.Sema = .{
-        .allocator = allocator,
+        .gpa = allocator,
     };
     defer sema.deinit(allocator);
 
