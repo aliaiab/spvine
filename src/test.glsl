@@ -69,7 +69,9 @@ u32 vertex_main(u32 z, u32 w, u32 k) {
 }
 #endif
 
-f32 forward_decl(uint x, uint y);
+f32 forward_decl(uint x, uint y) {
+    return 1;
+}
 
 struct Light {
     f32 pos_x;
@@ -78,15 +80,14 @@ struct Light {
 
 #
 
-#if 1
-
 #
 
-Light sussy() {
+f32 sussy() {
     // return 1;
-    return Light(2, 3);
+    return forward_decl(1, 2);
 }
 
+#if 0
 void main() {}
 
 Light sus(f32 c) {

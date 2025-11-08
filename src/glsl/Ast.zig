@@ -79,7 +79,7 @@ pub fn tokenLocation(self: Ast, token_index: TokenIndex) SourceLocation {
         .line_end = 0,
     };
 
-    const token_start = self.tokens.items(.start)[token_index];
+    const token_start = self.tokens.items(.start)[@intFromEnum(token_index)];
 
     for (self.source, 0..) |c, i| {
         if (i == token_start) {
@@ -102,8 +102,8 @@ pub fn tokenLocation(self: Ast, token_index: TokenIndex) SourceLocation {
 }
 
 pub fn tokenString(self: Ast, token_index: TokenIndex) []const u8 {
-    const token_start = self.tokens.items(.start)[token_index];
-    const token_end = self.tokens.items(.end)[token_index];
+    const token_start = self.tokens.items(.start)[@intFromEnum(token_index)];
+    const token_end = self.tokens.items(.end)[@intFromEnum(token_index)];
 
     return self.source[token_start..token_end];
 }
@@ -132,6 +132,10 @@ pub const Error = struct {
             lhs_type: Sema.TypeIndex,
             rhs_type: Sema.TypeIndex,
         },
+        argument_count_mismatch: struct {
+            expected_argument_count: u32,
+            actual_argument_count: u32,
+        },
     } = .{ .none = {} },
 
     pub const Tag = enum(u8) {
@@ -148,25 +152,14 @@ pub const Error = struct {
         modified_const,
         type_mismatch,
         type_incompatibility,
+        argument_count_mismatch,
     };
 };
 
 pub const TokenList = std.MultiArrayList(Token);
 
-//TODO: make this a packed struct for type safety?
-pub const TokenIndex = u32;
-
-///Represents a unique handle to a type which will be populated during semantic analysis
-pub const TypeIndex = packed struct(u32) {
-    index: u32,
-
-    pub const nil = TypeIndex{
-        .index = 0,
-    };
-
-    pub fn isNil(self: TypeIndex) bool {
-        return self.index == nil.index;
-    }
+pub const TokenIndex = enum(u32) {
+    _,
 };
 
 pub const NodeIndex = packed struct(u32) {

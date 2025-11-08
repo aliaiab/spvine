@@ -140,7 +140,7 @@ pub fn parseStruct(self: *Parser) !Ast.NodeIndex {
 
     try self.nodeSetData(&node_index, .struct_definition, .{
         .name = struct_name_identifier,
-        .fields = try self.allocator.dupe(Ast.NodeIndex, field_nodes.items),
+        .fields = try self.node_heap.allocateDupe(self.allocator, Ast.NodeIndex, field_nodes.items),
     });
 
     _ = try self.expectToken(.right_brace);
@@ -506,6 +506,24 @@ pub fn parseExpression(
                     .token = identifier,
                 });
             },
+            .keyword_uint,
+            .keyword_int,
+            .keyword_float,
+            .keyword_double,
+            .keyword_bool,
+            => {
+                if (lhs != Ast.NodeIndex.nil and !binary.isBinaryExpression(self.previousTokenTag())) {
+                    return self.unexpectedToken();
+                }
+
+                node = try self.reserveNode(.expression_literal_number);
+
+                const keyword_token: Ast.TokenIndex = self.nextToken().?;
+
+                try self.nodeSetData(&node, .expression_identifier, .{
+                    .token = keyword_token,
+                });
+            },
             .left_paren => {
                 const open_paren = self.eatToken(.left_paren);
                 defer if (open_paren) |_| {
@@ -514,22 +532,26 @@ pub fn parseExpression(
 
                 node = try self.parseExpression(.{});
 
-                if (lhs.tag == .expression_identifier) {
-                    const identifier_data: Ast.Node.Identifier = self.node_heap.getNodePtrConst(.expression_identifier, lhs.index).*;
+                switch (lhs.tag) {
+                    .expression_identifier,
+                    => {
+                        const identifier_data: Ast.Node.Identifier = self.node_heap.getNodePtrConst(.expression_identifier, lhs.index).*;
 
-                    var sub_node = try self.reserveNode(.expression_binary_proc_call);
+                        var sub_node = try self.reserveNode(.expression_binary_proc_call);
 
-                    try self.nodeSetData(&sub_node, .expression_binary_proc_call, .{
-                        .op_token = identifier_data.token,
-                        .left = lhs,
-                        .right = node,
-                    });
+                        try self.nodeSetData(&sub_node, .expression_binary_proc_call, .{
+                            .op_token = identifier_data.token,
+                            .left = lhs,
+                            .right = node,
+                        });
 
-                    node = sub_node;
+                        node = sub_node;
+                    },
+                    else => {},
                 }
             },
             inline else => |tag| {
-                const op_token = self.token_index;
+                const op_token: Ast.TokenIndex = @enumFromInt(self.token_index);
 
                 defer switch (tag) {
                     .left_bracket => {
@@ -592,7 +614,7 @@ pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
 
             defer self.token_index += 1;
 
-            try self.nodeSetData(&node, .type_expr, .{ .token = self.token_index });
+            try self.nodeSetData(&node, .type_expr, .{ .token = @enumFromInt(self.token_index) });
 
             return node;
         },
@@ -647,10 +669,10 @@ pub fn tokenString(self: Parser, token: Token) []const u8 {
     return self.source[token.start..token.end];
 }
 
-pub fn expectToken(self: *Parser, tag: Token.Tag) !u32 {
+pub fn expectToken(self: *Parser, tag: Token.Tag) !Ast.TokenIndex {
     errdefer self.errors.append(self.allocator, .{
         .tag = .expected_token,
-        .token = self.token_index,
+        .token = @enumFromInt(self.token_index),
         .data = .{
             .expected_token = tag,
         },
@@ -662,13 +684,13 @@ pub fn expectToken(self: *Parser, tag: Token.Tag) !u32 {
 pub fn unexpectedToken(self: *Parser) anyerror {
     if (self.token_tags[self.token_index] != .invalid) self.errors.append(self.allocator, .{
         .tag = .unexpected_token,
-        .token = self.token_index,
+        .token = @enumFromInt(self.token_index),
     }) catch unreachable;
 
     return error.UnexpectedToken;
 }
 
-pub fn eatToken(self: *Parser, tag: Token.Tag) ?u32 {
+pub fn eatToken(self: *Parser, tag: Token.Tag) ?Ast.TokenIndex {
     if (self.token_index < self.token_tags.len and self.peekTokenTag() != null and self.peekTokenTag() == tag) {
         return self.nextToken();
     } else {
@@ -676,7 +698,7 @@ pub fn eatToken(self: *Parser, tag: Token.Tag) ?u32 {
     }
 }
 
-pub fn nextToken(self: *Parser) ?u32 {
+pub fn nextToken(self: *Parser) ?Ast.TokenIndex {
     const result = self.peekToken();
 
     self.token_index += 1;
@@ -701,22 +723,22 @@ pub fn peekTokenTag(self: Parser) ?Token.Tag {
 }
 
 pub fn lookAheadTokenTag(self: Parser, amount: u32) ?Token.Tag {
-    return self.token_tags[self.lookAheadToken(amount) orelse return null];
+    return self.token_tags[@intFromEnum(self.lookAheadToken(amount) orelse return null)];
 }
 
 //TODO: support preprocessor directives inside function bodies by modifying this to allow that
-pub fn peekToken(self: Parser) ?u32 {
+pub fn peekToken(self: Parser) ?Ast.TokenIndex {
     return self.lookAheadToken(0);
 }
 
-pub fn lookAheadToken(self: Parser, amount: u32) ?u32 {
+pub fn lookAheadToken(self: Parser, amount: u32) ?Ast.TokenIndex {
     const result = self.token_index + amount;
 
     if (result >= self.token_tags.len) {
         return null;
     }
 
-    return result;
+    return @enumFromInt(result);
 }
 
 const std = @import("std");
