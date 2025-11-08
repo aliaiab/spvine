@@ -99,14 +99,16 @@ fn printErrors(
     stderr: *std.Io.Writer,
 ) void {
     for (errors) |error_value| {
-        const is_same_line = ast.tokenLocation(error_value.token -| 1).line == ast.tokenLocation(error_value.token).line;
+        const previous_token: Ast.TokenIndex = @enumFromInt(@intFromEnum(error_value.token) -| 1);
+
+        const is_same_line = ast.tokenLocation(previous_token).line == ast.tokenLocation(error_value.token).line;
 
         const loc = if (is_same_line)
             ast.tokenLocation(error_value.token)
         else
-            ast.tokenLocation(error_value.token - if (error_value.tag == .expected_token) @as(u32, 1) else @as(u32, 0));
+            ast.tokenLocation(if (error_value.tag == .expected_token) previous_token else error_value.token);
 
-        const found_token = ast.tokens.items(.tag)[error_value.token];
+        const found_token = ast.tokens.items(.tag)[@intFromEnum(error_value.token)];
 
         const terminal_red = "\x1B[31m";
         const terminal_green = "\x1B[32m";
@@ -138,7 +140,7 @@ fn printErrors(
                 }) catch {};
             },
             .directive_error => {
-                const error_directive_end = ast.tokens.items(.end)[error_value.token];
+                const error_directive_end = ast.tokens.items(.end)[@intFromEnum(error_value.token)];
 
                 const error_message_to_eof = ast.source[error_directive_end..];
 
@@ -246,6 +248,31 @@ fn printErrors(
                     color_end,
                 }) catch {};
             },
+            .argument_count_mismatch => {
+                const argument_count_mismatch = error_value.data.argument_count_mismatch;
+
+                if (argument_count_mismatch.actual_argument_count < argument_count_mismatch.expected_argument_count) {
+                    stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " too few arguments: expected {}, found {}\n" ++ color_end, .{
+                        file_path,
+                        loc.line,
+                        loc.column,
+                        terminal_red,
+                        color_end,
+                        argument_count_mismatch.expected_argument_count,
+                        argument_count_mismatch.actual_argument_count,
+                    }) catch {};
+                } else {
+                    stderr.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " too many arguments: expected {}, found {}\n" ++ color_end, .{
+                        file_path,
+                        loc.line,
+                        loc.column,
+                        terminal_red,
+                        color_end,
+                        argument_count_mismatch.expected_argument_count,
+                        argument_count_mismatch.actual_argument_count,
+                    }) catch {};
+                }
+            },
         }
 
         var tokenizer = Tokenizer.init(ast.source[0 .. loc.line_end + 1]);
@@ -254,7 +281,7 @@ fn printErrors(
 
         var last_token: ?Tokenizer.Token = null;
 
-        const erroring_token_start = ast.tokens.items(.start)[error_value.token];
+        const erroring_token_start = ast.tokens.items(.start)[@intFromEnum(error_value.token)];
 
         //Source line render
         while (tokenizer.next()) |token| {
@@ -299,7 +326,7 @@ fn printErrors(
 
         stderr.print(terminal_green, .{}) catch {};
 
-        const cursor_length_raw = ast.tokens.items(.start)[error_value.token] - loc.line_start;
+        const cursor_length_raw = ast.tokens.items(.start)[@intFromEnum(error_value.token)] - loc.line_start;
 
         const cursor_length = @min(cursor_length_raw, loc.line_end - loc.line_start);
 
