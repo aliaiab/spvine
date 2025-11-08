@@ -146,7 +146,7 @@ pub fn analyseStructDefinition(
 
             try self.errors.append(self.allocator, .{
                 .tag = .identifier_redefined,
-                .token = field_node_data.name,
+                .anchor = .{ .token = field_node_data.name },
                 .data = .{
                     .identifier_redefined = .{
                         .redefinition_identifier = field_node_data.name,
@@ -170,7 +170,7 @@ pub fn analyseStructDefinition(
 
         try self.errors.append(self.allocator, .{
             .tag = .identifier_redefined,
-            .token = definition.name,
+            .anchor = .{ .token = definition.name },
             .data = .{
                 .identifier_redefined = .{
                     .redefinition_identifier = definition.name,
@@ -303,7 +303,7 @@ pub fn analyseStatement(
                 .null => {
                     try self.errors.append(self.allocator, .{
                         .tag = .type_mismatch,
-                        .token = statement_if.if_token,
+                        .anchor = .{ .token = statement_if.if_token },
                         .data = .{
                             .type_mismatch = .{
                                 .lhs_type = .bool,
@@ -343,11 +343,11 @@ pub fn analyseStatement(
 
             const expr_type = if (statement_return.expression != Ast.NodeIndex.nil) try self.resolveTypeFromExpression(ast, statement_return.expression) else .void;
 
-            _ = switch (coerceType(procedure.return_type, expr_type)) {
+            _ = switch (coerceTypeAssign(procedure.return_type, expr_type)) {
                 .null => {
                     try self.errors.append(self.allocator, .{
                         .tag = .type_mismatch,
-                        .token = statement_return.return_token,
+                        .anchor = .{ .node = statement_return.expression },
                         .data = .{
                             .type_mismatch = .{
                                 .lhs_type = procedure.return_type,
@@ -378,24 +378,27 @@ pub fn resolveProcedure(
     const procedure_definition = self.procedures.getPtr(ast.tokenString(name_data.token)) orelse {
         try self.errors.append(self.allocator, .{
             .tag = .undeclared_identifier,
-            .token = name_data.token,
+            .anchor = .{ .token = name_data.token },
         });
 
         return error.UndeclaredIdentifier;
     };
 
-    const final_position = try self.analyseArgList(ast, procedure_definition.*, param_or_arg_list, .{
+    var type_buffer: [16]TypeIndex = undefined;
+
+    const arg_type_list = try self.analyseArgList(ast, procedure_definition.*, param_or_arg_list, .{
         .op_token = name_data.token,
+        .type_buffer = &type_buffer,
     });
 
-    if (final_position < procedure_definition.parameters.len) {
+    if (arg_type_list.len < procedure_definition.parameters.len) {
         try self.errors.append(self.allocator, .{
             .tag = .argument_count_mismatch,
-            .token = name_data.token,
+            .anchor = .{ .token = name_data.token },
             .data = .{
                 .argument_count_mismatch = .{
                     .expected_argument_count = @intCast(procedure_definition.parameters.len),
-                    .actual_argument_count = @intCast(final_position),
+                    .actual_argument_count = @intCast(arg_type_list.len),
                 },
             },
         });
@@ -406,16 +409,18 @@ pub fn resolveProcedure(
     return procedure_definition;
 }
 
+///Returns a list of positional argument types
 pub fn analyseArgList(
     self: *Sema,
     ast: Ast,
     procedure: Procedure,
     node: Ast.NodeIndex,
     state: struct {
+        type_buffer: []TypeIndex,
         base_position: usize = 0,
         op_token: Ast.TokenIndex,
     },
-) !usize {
+) ![]TypeIndex {
     switch (node.tag) {
         .expression_binary_comma => {
             const binary_comma: Ast.Node.BinaryExpression = ast.dataFromNode(node, .expression_binary_comma);
@@ -424,11 +429,12 @@ pub fn analyseArgList(
                 ast,
                 procedure,
                 binary_comma.left,
-                .{ .op_token = binary_comma.op_token },
+                .{ .type_buffer = state.type_buffer, .op_token = binary_comma.op_token },
             );
 
             return try self.analyseArgList(ast, procedure, binary_comma.right, .{
-                .base_position = new_position,
+                .type_buffer = state.type_buffer,
+                .base_position = new_position.len,
                 .op_token = binary_comma.op_token,
             });
         },
@@ -438,7 +444,7 @@ pub fn analyseArgList(
             if (position >= procedure.parameters.len) {
                 try self.errors.append(self.allocator, .{
                     .tag = .argument_count_mismatch,
-                    .token = state.op_token,
+                    .anchor = .{ .token = state.op_token },
                     .data = .{
                         .argument_count_mismatch = .{
                             .expected_argument_count = @intCast(procedure.parameters.len),
@@ -457,7 +463,7 @@ pub fn analyseArgList(
                 .null => {
                     try self.errors.append(self.allocator, .{
                         .tag = .type_mismatch,
-                        .token = state.op_token,
+                        .anchor = .{ .token = state.op_token },
                         .data = .{
                             .type_mismatch = .{
                                 .lhs_type = parameter.type_index,
@@ -470,9 +476,10 @@ pub fn analyseArgList(
                 },
                 else => |res| res,
             };
-            _ = resultant_type; // autofix
 
-            return position + 1;
+            state.type_buffer[position] = resultant_type;
+
+            return state.type_buffer[0 .. position + 1];
         },
     }
 }
@@ -507,7 +514,7 @@ pub fn scopeDefine(
     if (scope.identifiers.get(identifier_string)) |original_definition| {
         try self.errors.append(self.allocator, .{
             .tag = .identifier_redefined,
-            .token = identifier_token,
+            .anchor = .{ .token = identifier_token },
             .data = .{
                 .identifier_redefined = .{
                     .redefinition_identifier = identifier_token,
@@ -540,7 +547,7 @@ pub fn scopeResolve(self: *Sema, ast: Ast, identifier_token: Ast.TokenIndex) !*I
 
     try self.errors.append(self.allocator, .{
         .tag = .undeclared_identifier,
-        .token = identifier_token,
+        .anchor = .{ .token = identifier_token },
     });
 
     return error.UndeclaredIdentifier;
@@ -565,7 +572,7 @@ pub fn resolveTypeFromIdentifier(self: *Sema, ast: Ast, type_expr_token: Ast.Tok
             const type_index = self.type_map.get(ast.tokenString(type_expr_token)) orelse {
                 try self.errors.append(self.allocator, .{
                     .tag = .undeclared_identifier,
-                    .token = type_expr_token,
+                    .anchor = .{ .token = type_expr_token },
                 });
 
                 return error.UndeclaredIdentifier;
@@ -640,7 +647,7 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                 .null => {
                     try self.errors.append(self.allocator, .{
                         .tag = .type_mismatch,
-                        .token = var_init.identifier,
+                        .anchor = .{ .token = var_init.identifier },
                         .data = .{
                             .type_mismatch = .{
                                 .lhs_type = type_index,
@@ -672,7 +679,7 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                 .null => {
                     try self.errors.append(self.allocator, .{
                         .tag = .type_mismatch,
-                        .token = binary_expr.op_token,
+                        .anchor = .{ .token = binary_expr.op_token },
                         .data = .{
                             .type_mismatch = .{
                                 .lhs_type = lhs_type,
@@ -689,7 +696,7 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
             if (!comparison_type.isOperatorDefined(expression.tag)) {
                 try self.errors.append(self.allocator, .{
                     .tag = .type_incompatibility,
-                    .token = binary_expr.op_token,
+                    .anchor = .{ .token = binary_expr.op_token },
                     .data = .{
                         .type_incompatibility = .{
                             .lhs_type = lhs_type,
@@ -717,7 +724,7 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                 .null => {
                     try self.errors.append(self.allocator, .{
                         .tag = .type_mismatch,
-                        .token = binary_expr.op_token,
+                        .anchor = .{ .node = expression },
                         .data = .{
                             .type_mismatch = .{
                                 .lhs_type = lhs_type,
@@ -734,7 +741,7 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
             if (!resultant_type.isOperatorDefined(expression.tag)) {
                 try self.errors.append(self.allocator, .{
                     .tag = .type_incompatibility,
-                    .token = binary_expr.op_token,
+                    .anchor = .{ .token = binary_expr.op_token },
                     .data = .{
                         .type_incompatibility = .{
                             .lhs_type = lhs_type,
@@ -761,7 +768,7 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
             if (!assignable) {
                 try self.errors.append(self.allocator, .{
                     .tag = .modified_const,
-                    .token = binary_expr.op_token,
+                    .anchor = .{ .token = binary_expr.op_token },
                 });
 
                 return error.ModifiedConstant;
@@ -774,7 +781,7 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                 .null => {
                     try self.errors.append(self.allocator, .{
                         .tag = .type_mismatch,
-                        .token = binary_expr.op_token,
+                        .anchor = .{ .token = binary_expr.op_token },
                         .data = .{
                             .type_mismatch = .{
                                 .lhs_type = lhs_type,
@@ -791,7 +798,7 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
             if (!resultant_type.isOperatorDefined(expression.tag)) {
                 try self.errors.append(self.allocator, .{
                     .tag = .type_incompatibility,
-                    .token = binary_expr.op_token,
+                    .anchor = .{ .token = binary_expr.op_token },
                     .data = .{
                         .type_incompatibility = .{
                             .lhs_type = lhs_type,

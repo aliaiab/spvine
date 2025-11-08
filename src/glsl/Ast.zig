@@ -71,6 +71,10 @@ pub const SourceLocation = struct {
 };
 
 pub fn tokenLocation(self: Ast, token_index: TokenIndex) SourceLocation {
+    return self.sourceStringLocation(self.tokenString(token_index));
+}
+
+pub fn sourceStringLocation(self: Ast, source_string: []const u8) SourceLocation {
     var loc = SourceLocation{
         .source_name = self.source_name,
         .line = 1,
@@ -79,10 +83,8 @@ pub fn tokenLocation(self: Ast, token_index: TokenIndex) SourceLocation {
         .line_end = 0,
     };
 
-    const token_start = self.tokens.items(.start)[@intFromEnum(token_index)];
-
     for (self.source, 0..) |c, i| {
-        if (i == token_start) {
+        if (self.source[i..].ptr == source_string.ptr) {
             loc.line_end = @as(u32, @intCast(i));
             while (loc.line_end < self.source.len and self.source[loc.line_end] != '\n') {
                 loc.line_end += 1;
@@ -108,9 +110,86 @@ pub fn tokenString(self: Ast, token_index: TokenIndex) []const u8 {
     return self.source[token_start..token_end];
 }
 
+pub fn nodeStringRange(
+    self: Ast,
+    node: NodeIndex,
+) SourceStringRange {
+    const node_string_range: SourceStringRange = .{ .start = 0, .end = self.source.len };
+
+    return self.nodeStringRecursive(node, node_string_range);
+}
+
+const SourceStringRange = struct {
+    start: usize,
+    end: usize,
+};
+
+fn nodeStringRecursive(
+    self: Ast,
+    node: NodeIndex,
+    parent_range: SourceStringRange,
+) SourceStringRange {
+    var maybe_token: ?TokenIndex = null;
+
+    var result_range: SourceStringRange = parent_range;
+
+    switch (node.tag) {
+        .expression_binary_leql,
+        .expression_binary_geql,
+        .expression_binary_eql,
+        .expression_binary_neql,
+        .expression_binary_add,
+        .expression_binary_sub,
+        .expression_binary_div,
+        .expression_binary_mul,
+        => {
+            const binary_expr: Node.BinaryExpression = self.dataFromNode(node, .expression_binary_add);
+
+            maybe_token = binary_expr.op_token;
+
+            const lhs_range = self.nodeStringRecursive(binary_expr.left, parent_range);
+            const rhs_range = self.nodeStringRecursive(binary_expr.right, parent_range);
+
+            result_range.start = @min(lhs_range.start, rhs_range.start);
+            result_range.end = @max(lhs_range.end, rhs_range.end);
+
+            return result_range;
+        },
+        .expression_literal_boolean => {
+            const literal_boolean: Node.LiteralBoolean = self.dataFromNode(node, .expression_literal_boolean);
+            maybe_token = literal_boolean.token;
+        },
+        .expression_literal_number => {
+            const literal_number: Node.ExpressionLiteralNumber = self.dataFromNode(node, .expression_literal_number);
+            maybe_token = literal_number.token;
+        },
+        .expression_identifier => {
+            const identifier: Node.Identifier = self.dataFromNode(node, .expression_identifier);
+            maybe_token = identifier.token;
+        },
+        else => {
+            @panic("");
+        },
+    }
+
+    if (maybe_token) |token| {
+        const op_token_start = self.tokens.items(.start)[@intFromEnum(token)];
+        const op_token_end = self.tokens.items(.end)[@intFromEnum(token)];
+
+        result_range.start = @max(parent_range.start, op_token_start);
+        result_range.end = @min(parent_range.end, op_token_end);
+    }
+
+    return result_range;
+}
+
 pub const Error = struct {
     tag: Tag,
-    token: Ast.TokenIndex,
+    ///Points to the location in the source where the error occurs
+    anchor: union(enum) {
+        token: TokenIndex,
+        node: NodeIndex,
+    },
     data: union {
         none: void,
         expected_token: Token.Tag,

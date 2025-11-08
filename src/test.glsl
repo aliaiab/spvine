@@ -14,8 +14,8 @@
 // typedef f64 double
 
 //Fused multiply-add
-f32 fmadd(const f32 a, const f32 b, const f32 c) { //hello from comment!
-    return a * c + c;
+u32 fmadd(const f32 a, const f32 b, const f32 c) { //hello from comment!
+    return (a * c + c);
 }
 
 #define CONSTANT_FIVE
@@ -82,12 +82,13 @@ struct Light {
 
 #
 
-f32 sussy() {
+Light sussy() {
     // return 1;
-    return forward_decl(1, 2);
+    // return forward_decl(1, true);
+    return 1 + 2 - (1 * (3 + 1.3) + true);
 }
 
-#if 0
+#if 1
 void main() {}
 
 Light sus(f32 c) {
@@ -126,6 +127,6 @@ Light sus(f32 c) {
     // v *= forward_decl(v, v * v + v);
     v += 1 - v * 5;
 
-    return c;
+    return c * 3 + 2;
 }
 #endif

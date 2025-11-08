@@ -672,7 +672,7 @@ pub fn tokenString(self: Parser, token: Token) []const u8 {
 pub fn expectToken(self: *Parser, tag: Token.Tag) !Ast.TokenIndex {
     errdefer self.errors.append(self.allocator, .{
         .tag = .expected_token,
-        .token = @enumFromInt(self.token_index),
+        .anchor = .{ .token = @enumFromInt(self.token_index) },
         .data = .{
             .expected_token = tag,
         },
@@ -684,7 +684,7 @@ pub fn expectToken(self: *Parser, tag: Token.Tag) !Ast.TokenIndex {
 pub fn unexpectedToken(self: *Parser) anyerror {
     if (self.token_tags[self.token_index] != .invalid) self.errors.append(self.allocator, .{
         .tag = .unexpected_token,
-        .token = @enumFromInt(self.token_index),
+        .anchor = .{ .token = @enumFromInt(self.token_index) },
     }) catch unreachable;
 
     return error.UnexpectedToken;
