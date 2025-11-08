@@ -198,10 +198,6 @@ pub fn parseParamList(self: *Parser) !Ast.NodeIndex {
         }
     }
 
-    if (param_nodes.items.len == 0) {
-        return Ast.NodeIndex.nil;
-    }
-
     try self.nodeSetData(&node, .param_list, .{
         .params = try self.node_heap.allocateDupe(self.allocator, Ast.NodeIndex, param_nodes.items),
     });
@@ -530,7 +526,11 @@ pub fn parseExpression(
                     _ = self.eatToken(.right_paren);
                 };
 
-                node = try self.parseExpression(.{});
+                if (self.peekTokenTag() == .right_paren) {
+                    node = .nil;
+                } else {
+                    node = try self.parseExpression(.{});
+                }
 
                 switch (lhs.tag) {
                     .expression_identifier,

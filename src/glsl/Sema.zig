@@ -1,10 +1,11 @@
 //! Implements the semantic analysis stage of the frontend
 
-allocator: std.mem.Allocator,
+gpa: std.mem.Allocator,
 scope_stack: std.ArrayList(struct {
     identifiers: token_map.Map(IdentifierDefinition) = .{},
 }) = .{},
-procedures: token_map.Map(Procedure) = .{},
+procedures: std.ArrayList(Procedure) = .{},
+procedure_overloads: token_map.Map(ProcedureOverloads) = .{},
 types: std.ArrayList(Type) = .{},
 type_map: token_map.Map(TypeIndex) = .{},
 
@@ -17,14 +18,43 @@ air_builder: struct {
 } = .{},
 errors: std.ArrayList(Ast.Error) = .{},
 
-pub const Procedure = struct {
-    return_type: TypeIndex,
-    parameters: []const Parameter,
+///Points to a specific overload of a wider function name
+pub const ProcedureIndex = enum(u32) { _ };
 
-    pub const Parameter = struct {
-        type_index: TypeIndex,
-        qualifier: ValueQualifier,
-    };
+pub const ProcedureOverloads = struct {
+    return_type: TypeIndex,
+    parameter_qualifiers: []const ValueQualifier,
+    //The range of parameter counts across overloads
+    min_parameter_count: u32,
+    max_parameter_count: u32,
+    overloads: std.ArrayHashMapUnmanaged([]const TypeIndex, ProcedureIndex, TypeSignatureMapContext, true),
+};
+
+pub const Procedure = struct {
+    general_data: *ProcedureOverloads,
+    parameter_types: []const TypeIndex,
+    body_defined: bool,
+};
+
+pub const TypeSignatureMapContext = struct {
+    pub fn eql(_: @This(), a: []const TypeIndex, b: []const TypeIndex, b_index: usize) bool {
+        _ = b_index; // autofix
+        if (a.len != b.len) return false;
+
+        for (a, b) |type_a, type_b| {
+            if (type_a != type_b) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    pub fn hash(_: @This(), a: []const TypeIndex) u32 {
+        const a_as_bytes: []const u8 = @ptrCast(a);
+
+        return std.hash.XxHash32.hash(0, a_as_bytes);
+    }
 };
 
 pub const IdentifierDefinition = struct {
@@ -90,6 +120,7 @@ pub fn analyse(sema: *Sema, ast: Ast, allocator: std.mem.Allocator) !struct {
                         error.TypeIncompatibilty,
                         error.ModifiedConstant,
                         error.ArgumentCountMismatch,
+                        error.NoMatchingOverload,
                         => {},
                         else => return e,
                     }
@@ -144,7 +175,7 @@ pub fn analyseStructDefinition(
         if (fields.get(ast.tokenString(field_node_data.name))) |original_field| {
             const original_field_node_data: Ast.Node.StructField = ast.dataFromNode(original_field.node, .struct_field);
 
-            try self.errors.append(self.allocator, .{
+            try self.errors.append(self.gpa, .{
                 .tag = .identifier_redefined,
                 .anchor = .{ .token = field_node_data.name },
                 .data = .{
@@ -159,7 +190,7 @@ pub fn analyseStructDefinition(
         }
 
         try fields.putNoClobber(
-            self.allocator,
+            self.gpa,
             ast.tokenString(field_node_data.name),
             .{ .type_index = type_expr, .node = field_node },
         );
@@ -168,7 +199,7 @@ pub fn analyseStructDefinition(
     if (self.type_map.get(ast.tokenString(definition.name))) |type_index| {
         const type_data = self.types.items[type_index.toArrayIndex().?];
 
-        try self.errors.append(self.allocator, .{
+        try self.errors.append(self.gpa, .{
             .tag = .identifier_redefined,
             .anchor = .{ .token = definition.name },
             .data = .{
@@ -184,7 +215,7 @@ pub fn analyseStructDefinition(
 
     const type_index: TypeIndex = .fromArrayIndex(self.types.items.len);
 
-    try self.types.append(self.allocator, .{
+    try self.types.append(self.gpa, .{
         .@"struct" = .{
             .name = definition.name,
             .fields = fields,
@@ -192,7 +223,7 @@ pub fn analyseStructDefinition(
     });
 
     try self.type_map.put(
-        self.allocator,
+        self.gpa,
         ast.tokenString(definition.name),
         type_index,
     );
@@ -209,55 +240,103 @@ pub fn analyseProcedure(
     const procedure: Ast.Node.Procedure = ast.dataFromNode(node, .procedure);
     const param_list: Ast.Node.ParamList = ast.dataFromNode(procedure.param_list, .param_list);
 
-    const procedure_definition_get_result = try self.procedures.getOrPut(self.allocator, ast.tokenString(procedure.name));
+    const procedure_definition_get_result = try self.procedure_overloads.getOrPut(self.gpa, ast.tokenString(procedure.name));
     const procedure_definition = procedure_definition_get_result.value_ptr;
 
     if (!procedure_definition_get_result.found_existing) {
         procedure_definition.* = .{
-            .parameters = &.{},
+            .overloads = .{},
+            .min_parameter_count = @as(u32, @intCast(param_list.params.len)),
+            .max_parameter_count = @as(u32, @intCast(param_list.params.len)),
+            .parameter_qualifiers = &.{},
             .return_type = .void,
         };
     }
 
     procedure_definition.return_type = try self.resolveTypeFromTypeExpr(ast, procedure.return_type);
 
-    if (procedure.param_list != Ast.NodeIndex.nil) {
-        const parameters = try self.allocator.alloc(Procedure.Parameter, param_list.params.len);
-        errdefer self.allocator.free(parameters);
+    var procedure_index: ProcedureIndex = undefined;
 
-        procedure_definition.parameters = parameters;
+    //TODO: use an arena
+    const parameter_types = try self.gpa.alloc(TypeIndex, param_list.params.len);
 
-        for (param_list.params, 0..) |param_node, param_index| {
-            const param: Ast.Node.ParamExpr = ast.dataFromNode(param_node, .param_expr);
-            const param_definition = &parameters[param_index];
+    const parameter_qualifiers = try self.gpa.alloc(ValueQualifier, param_list.params.len);
 
-            const param_type = try self.resolveTypeFromTypeExpr(ast, param.type_expr);
+    for (param_list.params, 0..) |param_node, param_index| {
+        const param: Ast.Node.ParamExpr = ast.dataFromNode(param_node, .param_expr);
+        const param_definition_type = &parameter_types[param_index];
+        const param_definition_qualifier = &parameter_qualifiers[param_index];
 
-            param_definition.qualifier = switch (param.qualifier) {
-                .keyword_inout => .inout,
-                .keyword_out => .out,
-                .keyword_in => .in,
-                .keyword_const => .constant,
-                else => unreachable,
-            };
+        const param_type = try self.resolveTypeFromTypeExpr(ast, param.type_expr);
 
-            param_definition.type_index = param_type;
+        param_definition_qualifier.* = switch (param.qualifier) {
+            .keyword_inout => .inout,
+            .keyword_out => .out,
+            .keyword_in => .in,
+            .keyword_const => .constant,
+            else => unreachable,
+        };
 
-            try self.scopeDefine(
-                ast,
-                param.name,
-                param_type,
-                param_definition.qualifier,
-            );
-        }
+        param_definition_type.* = param_type;
+
+        try self.scopeDefine(
+            ast,
+            param.name,
+            param_type,
+            param_definition_qualifier.*,
+        );
     }
 
-    //TODO: handle forward declaration
+    if (!procedure_definition_get_result.found_existing) {
+        procedure_definition_get_result.value_ptr.parameter_qualifiers = parameter_qualifiers;
+    } else {
+        //TODO: emit an error if qualifiers don't match
+    }
+
+    const overload_query = try procedure_definition.overloads.getOrPut(
+        self.gpa,
+        parameter_types,
+    );
+
+    procedure_definition.max_parameter_count = @max(procedure_definition.max_parameter_count, @as(u32, @intCast(param_list.params.len)));
+    procedure_definition.min_parameter_count = @min(procedure_definition.min_parameter_count, @as(u32, @intCast(param_list.params.len)));
+
+    if (overload_query.found_existing) {
+        procedure_index = overload_query.value_ptr.*;
+        const procedure_overload = self.procedures.items[@intFromEnum(procedure_index)];
+
+        if (procedure_overload.body_defined or procedure.body == Ast.NodeIndex.nil) {
+            try self.errors.append(self.gpa, .{
+                .tag = .identifier_redefined,
+                .anchor = .{ .token = procedure.name },
+                .data = .{
+                    .identifier_redefined = .{
+                        .redefinition_identifier = procedure.name,
+                        .definition_identifier = procedure.name,
+                    },
+                },
+            });
+
+            return error.IdentifierAlreadyDefined;
+        }
+    } else {
+        procedure_index = @enumFromInt(@as(u32, @intCast(self.procedures.items.len)));
+        const procedure_overload = try self.procedures.addOne(self.gpa);
+
+        procedure_overload.parameter_types = parameter_types;
+        procedure_overload.general_data = procedure_definition;
+        procedure_overload.body_defined = procedure.body != Ast.NodeIndex.nil;
+
+        overload_query.value_ptr.* = procedure_index;
+    }
+
     if (procedure.body == Ast.NodeIndex.nil) return;
+
+    const procedure_data = &self.procedures.items[@intFromEnum(procedure_index)];
 
     try self.analyseStatement(
         ast,
-        procedure_definition.*,
+        procedure_data,
         procedure.body,
         .{ .block_new_scope = false },
     );
@@ -266,7 +345,7 @@ pub fn analyseProcedure(
 pub fn analyseStatement(
     self: *Sema,
     ast: Ast,
-    procedure: Procedure,
+    procedure: *const Procedure,
     statement_node: Ast.NodeIndex,
     options: struct {
         ///Whether a statement_block should cause a new scope
@@ -301,9 +380,9 @@ pub fn analyseStatement(
 
             _ = switch (coerceType(.bool, condition_type)) {
                 .null => {
-                    try self.errors.append(self.allocator, .{
+                    try self.errors.append(self.gpa, .{
                         .tag = .type_mismatch,
-                        .anchor = .{ .token = statement_if.if_token },
+                        .anchor = .{ .node = statement_if.condition_expression },
                         .data = .{
                             .type_mismatch = .{
                                 .lhs_type = .bool,
@@ -343,14 +422,14 @@ pub fn analyseStatement(
 
             const expr_type = if (statement_return.expression != Ast.NodeIndex.nil) try self.resolveTypeFromExpression(ast, statement_return.expression) else .void;
 
-            _ = switch (coerceTypeAssign(procedure.return_type, expr_type)) {
+            _ = switch (coerceTypeAssign(procedure.general_data.return_type, expr_type)) {
                 .null => {
-                    try self.errors.append(self.allocator, .{
+                    try self.errors.append(self.gpa, .{
                         .tag = .type_mismatch,
                         .anchor = .{ .node = statement_return.expression },
                         .data = .{
                             .type_mismatch = .{
-                                .lhs_type = procedure.return_type,
+                                .lhs_type = procedure.general_data.return_type,
                                 .rhs_type = expr_type,
                             },
                         },
@@ -361,7 +440,7 @@ pub fn analyseStatement(
                 else => |res| res,
             };
         },
-        else => unreachable,
+        else => @panic(@tagName(statement_node.tag)),
     }
 }
 
@@ -374,9 +453,20 @@ pub fn resolveProcedure(
 ) anyerror!*Procedure {
     const name_data: Ast.Node.Identifier = ast.dataFromNode(name, .expression_identifier);
 
-    //TODO: handle procedure overloading
-    const procedure_definition = self.procedures.getPtr(ast.tokenString(name_data.token)) orelse {
-        try self.errors.append(self.allocator, .{
+    var type_buffer: [16]TypeIndex = undefined;
+    var arg_node_buffer: [16]Ast.NodeIndex = undefined;
+
+    const arg_type_list, const arg_node_list = try self.analyseArgList(
+        ast,
+        param_or_arg_list,
+        .{
+            .type_buffer = &type_buffer,
+            .node_buffer = &arg_node_buffer,
+        },
+    );
+
+    const procedure_overloads = self.procedure_overloads.getPtr(ast.tokenString(name_data.token)) orelse {
+        try self.errors.append(self.gpa, .{
             .tag = .undeclared_identifier,
             .anchor = .{ .token = name_data.token },
         });
@@ -384,20 +474,14 @@ pub fn resolveProcedure(
         return error.UndeclaredIdentifier;
     };
 
-    var type_buffer: [16]TypeIndex = undefined;
-
-    const arg_type_list = try self.analyseArgList(ast, procedure_definition.*, param_or_arg_list, .{
-        .op_token = name_data.token,
-        .type_buffer = &type_buffer,
-    });
-
-    if (arg_type_list.len < procedure_definition.parameters.len) {
-        try self.errors.append(self.allocator, .{
-            .tag = .argument_count_mismatch,
-            .anchor = .{ .token = name_data.token },
+    if (arg_node_list.len < procedure_overloads.min_parameter_count or arg_type_list.len > procedure_overloads.max_parameter_count) {
+        try self.errors.append(self.gpa, .{
+            .tag = .argument_count_out_of_range,
+            .anchor = .{ .node = param_or_arg_list },
             .data = .{
-                .argument_count_mismatch = .{
-                    .expected_argument_count = @intCast(procedure_definition.parameters.len),
+                .argument_count_out_of_range = .{
+                    .expected_min_count = @intCast(procedure_overloads.min_parameter_count),
+                    .expected_max_count = @intCast(procedure_overloads.max_parameter_count),
                     .actual_argument_count = @intCast(arg_type_list.len),
                 },
             },
@@ -406,6 +490,71 @@ pub fn resolveProcedure(
         return error.ArgumentCountMismatch;
     }
 
+    var matched_procedure: ?ProcedureIndex = null;
+
+    if (procedure_overloads.overloads.entries.len == 1) {
+        matched_procedure = procedure_overloads.overloads.values()[0];
+    }
+
+    if (matched_procedure == null) {
+        matched_procedure = procedure_overloads.overloads.get(arg_type_list);
+    }
+
+    if (matched_procedure == null) {
+        try self.errors.append(self.gpa, .{
+            .tag = .no_matching_overload,
+            .anchor = .{ .node = name },
+        });
+
+        return error.NoMatchingOverload;
+    }
+
+    const procedure_index = matched_procedure.?;
+
+    //Resolve overload
+    const procedure_definition = &self.procedures.items[@intFromEnum(procedure_index)];
+
+    if (arg_type_list.len != procedure_definition.parameter_types.len) {
+        try self.errors.append(self.gpa, .{
+            .tag = .argument_count_mismatch,
+            .anchor = .{ .node = param_or_arg_list },
+            .data = .{
+                .argument_count_mismatch = .{
+                    .expected_argument_count = @intCast(procedure_definition.parameter_types.len),
+                    .actual_argument_count = @intCast(arg_type_list.len),
+                },
+            },
+        });
+
+        return error.ArgumentCountMismatch;
+    }
+
+    for (arg_type_list, arg_node_list, 0..) |arg_type, arg_node, parameter_index| {
+        const parameter_type_index = procedure_definition.parameter_types[parameter_index];
+
+        const resultant_type = switch (coerceTypeAssign(parameter_type_index, arg_type)) {
+            .null => {
+                try self.errors.append(self.gpa, .{
+                    .tag = .type_mismatch,
+                    .anchor = .{ .node = arg_node },
+                    .data = .{
+                        .type_mismatch = .{
+                            .lhs_type = parameter_type_index,
+                            .rhs_type = arg_type,
+                        },
+                    },
+                });
+
+                return error.TypeMismatch;
+            },
+            else => |res| res,
+        };
+        _ = resultant_type; // autofix
+    }
+
+    //TODO: This is a fucking hack
+    procedure_definition.general_data = procedure_overloads;
+
     return procedure_definition;
 }
 
@@ -413,79 +562,54 @@ pub fn resolveProcedure(
 pub fn analyseArgList(
     self: *Sema,
     ast: Ast,
-    procedure: Procedure,
     node: Ast.NodeIndex,
     state: struct {
         type_buffer: []TypeIndex,
+        node_buffer: []Ast.NodeIndex,
         base_position: usize = 0,
-        op_token: Ast.TokenIndex,
     },
-) ![]TypeIndex {
+) !struct { []TypeIndex, []Ast.NodeIndex } {
     switch (node.tag) {
         .expression_binary_comma => {
             const binary_comma: Ast.Node.BinaryExpression = ast.dataFromNode(node, .expression_binary_comma);
 
-            const new_position = try self.analyseArgList(
+            const new_position, _ = try self.analyseArgList(
                 ast,
-                procedure,
                 binary_comma.left,
-                .{ .type_buffer = state.type_buffer, .op_token = binary_comma.op_token },
+                .{
+                    .type_buffer = state.type_buffer,
+                    .node_buffer = state.node_buffer,
+                },
             );
 
-            return try self.analyseArgList(ast, procedure, binary_comma.right, .{
+            return try self.analyseArgList(ast, binary_comma.right, .{
                 .type_buffer = state.type_buffer,
+                .node_buffer = state.node_buffer,
                 .base_position = new_position.len,
-                .op_token = binary_comma.op_token,
             });
         },
         else => {
             const position = state.base_position;
 
-            if (position >= procedure.parameters.len) {
-                try self.errors.append(self.allocator, .{
-                    .tag = .argument_count_mismatch,
-                    .anchor = .{ .token = state.op_token },
-                    .data = .{
-                        .argument_count_mismatch = .{
-                            .expected_argument_count = @intCast(procedure.parameters.len),
-                            .actual_argument_count = @intCast(position + 1),
-                        },
-                    },
-                });
-
-                return error.ArgumentCountMismatch;
-            }
-
-            const parameter = &procedure.parameters[position];
             const expr_type = try self.resolveTypeFromExpression(ast, node);
 
-            const resultant_type = switch (coerceTypeAssign(parameter.type_index, expr_type)) {
-                .null => {
-                    try self.errors.append(self.allocator, .{
-                        .tag = .type_mismatch,
-                        .anchor = .{ .token = state.op_token },
-                        .data = .{
-                            .type_mismatch = .{
-                                .lhs_type = parameter.type_index,
-                                .rhs_type = expr_type,
-                            },
-                        },
-                    });
+            var expr_type_prim: TypeIndex.PrimitiveNumericType = @bitCast(@intFromEnum(expr_type));
 
-                    return error.TypeMismatch;
-                },
-                else => |res| res,
-            };
+            //This canonicalizes primitive types like literal_uint -> uint
+            if (expr_type.toArrayIndex() == null) {
+                expr_type_prim.literal = 0;
+            }
 
-            state.type_buffer[position] = resultant_type;
+            state.type_buffer[position] = @enumFromInt(@as(u32, @bitCast(expr_type_prim)));
+            state.node_buffer[position] = node;
 
-            return state.type_buffer[0 .. position + 1];
+            return .{ state.type_buffer[0 .. position + 1], state.node_buffer[0 .. position + 1] };
         },
     }
 }
 
 pub fn scopePush(self: *Sema) !void {
-    try self.scope_stack.append(self.allocator, .{});
+    try self.scope_stack.append(self.gpa, .{});
 }
 
 pub fn scopePop(self: *Sema) void {
@@ -495,7 +619,7 @@ pub fn scopePop(self: *Sema) void {
 
     const scope = &self.scope_stack.items[self.scope_stack.items.len - 1];
 
-    scope.identifiers.deinit(self.allocator);
+    scope.identifiers.deinit(self.gpa);
 
     self.scope_stack.items.len -= 1;
 }
@@ -512,7 +636,7 @@ pub fn scopeDefine(
     const identifier_string = ast.tokenString(identifier_token);
 
     if (scope.identifiers.get(identifier_string)) |original_definition| {
-        try self.errors.append(self.allocator, .{
+        try self.errors.append(self.gpa, .{
             .tag = .identifier_redefined,
             .anchor = .{ .token = identifier_token },
             .data = .{
@@ -526,7 +650,7 @@ pub fn scopeDefine(
         return error.IdentifierAlreadyDefined;
     }
 
-    try scope.identifiers.put(self.allocator, identifier_string, .{
+    try scope.identifiers.put(self.gpa, identifier_string, .{
         .type_index = type_index,
         .token_index = identifier_token,
         .qualifier = qualifier,
@@ -545,7 +669,7 @@ pub fn scopeResolve(self: *Sema, ast: Ast, identifier_token: Ast.TokenIndex) !*I
         }
     }
 
-    try self.errors.append(self.allocator, .{
+    try self.errors.append(self.gpa, .{
         .tag = .undeclared_identifier,
         .anchor = .{ .token = identifier_token },
     });
@@ -570,7 +694,7 @@ pub fn resolveTypeFromIdentifier(self: *Sema, ast: Ast, type_expr_token: Ast.Tok
         .keyword_void => .void,
         .identifier => {
             const type_index = self.type_map.get(ast.tokenString(type_expr_token)) orelse {
-                try self.errors.append(self.allocator, .{
+                try self.errors.append(self.gpa, .{
                     .tag = .undeclared_identifier,
                     .anchor = .{ .token = type_expr_token },
                 });
@@ -645,7 +769,7 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
 
             const resultant_type = switch (coerceTypeAssign(type_index, expression_type_index)) {
                 .null => {
-                    try self.errors.append(self.allocator, .{
+                    try self.errors.append(self.gpa, .{
                         .tag = .type_mismatch,
                         .anchor = .{ .token = var_init.identifier },
                         .data = .{
@@ -677,7 +801,7 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
 
             const comparison_type = switch (coerceType(lhs_type, rhs_type)) {
                 .null => {
-                    try self.errors.append(self.allocator, .{
+                    try self.errors.append(self.gpa, .{
                         .tag = .type_mismatch,
                         .anchor = .{ .token = binary_expr.op_token },
                         .data = .{
@@ -694,9 +818,9 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
             };
 
             if (!comparison_type.isOperatorDefined(expression.tag)) {
-                try self.errors.append(self.allocator, .{
+                try self.errors.append(self.gpa, .{
                     .tag = .type_incompatibility,
-                    .anchor = .{ .token = binary_expr.op_token },
+                    .anchor = .{ .node = expression },
                     .data = .{
                         .type_incompatibility = .{
                             .lhs_type = lhs_type,
@@ -722,7 +846,7 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
 
             const resultant_type = switch (coerceType(lhs_type, rhs_type)) {
                 .null => {
-                    try self.errors.append(self.allocator, .{
+                    try self.errors.append(self.gpa, .{
                         .tag = .type_mismatch,
                         .anchor = .{ .node = expression },
                         .data = .{
@@ -739,9 +863,9 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
             };
 
             if (!resultant_type.isOperatorDefined(expression.tag)) {
-                try self.errors.append(self.allocator, .{
+                try self.errors.append(self.gpa, .{
                     .tag = .type_incompatibility,
-                    .anchor = .{ .token = binary_expr.op_token },
+                    .anchor = .{ .node = expression },
                     .data = .{
                         .type_incompatibility = .{
                             .lhs_type = lhs_type,
@@ -766,7 +890,7 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
             const assignable = try self.isExpressionAssignable(ast, binary_expr.left);
 
             if (!assignable) {
-                try self.errors.append(self.allocator, .{
+                try self.errors.append(self.gpa, .{
                     .tag = .modified_const,
                     .anchor = .{ .token = binary_expr.op_token },
                 });
@@ -779,7 +903,7 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
 
             const resultant_type = switch (coerceTypeAssign(lhs_type, rhs_type)) {
                 .null => {
-                    try self.errors.append(self.allocator, .{
+                    try self.errors.append(self.gpa, .{
                         .tag = .type_mismatch,
                         .anchor = .{ .token = binary_expr.op_token },
                         .data = .{
@@ -796,9 +920,9 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
             };
 
             if (!resultant_type.isOperatorDefined(expression.tag)) {
-                try self.errors.append(self.allocator, .{
+                try self.errors.append(self.gpa, .{
                     .tag = .type_incompatibility,
-                    .anchor = .{ .token = binary_expr.op_token },
+                    .anchor = .{ .node = expression },
                     .data = .{
                         .type_incompatibility = .{
                             .lhs_type = lhs_type,
@@ -836,9 +960,9 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
 
             const procedure = try self.resolveProcedure(ast, identifier, arg_list);
 
-            return procedure.return_type;
+            return procedure.general_data.return_type;
         },
-        else => unreachable,
+        else => @panic(@tagName(expression.tag)),
     }
 }
 
