@@ -12,11 +12,15 @@ state: enum {
     minus,
     asterisk,
     bang,
+    tilde,
     equals,
+    caret,
     single_comment,
     multi_comment,
     left_angled_bracket,
     right_angled_bracket,
+    double_left_angled_bracket,
+    double_right_angled_bracket,
     literal_number,
     literal_string,
     directive_start,
@@ -134,6 +138,9 @@ pub fn next(self: *Tokenizer) ?Token {
                     self.index += 1;
                     break;
                 },
+                '~' => {
+                    self.state = .tilde;
+                },
                 '+' => {
                     self.state = .plus;
                 },
@@ -142,6 +149,9 @@ pub fn next(self: *Tokenizer) ?Token {
                 },
                 '=' => {
                     self.state = .equals;
+                },
+                '^' => {
+                    self.state = .caret;
                 },
                 '*' => {
                     self.state = .asterisk;
@@ -219,7 +229,14 @@ pub fn next(self: *Tokenizer) ?Token {
                 },
             },
             .literal_number => switch (char) {
-                '0'...'9', '.', 'f', 'F', 'd', 'D', 'b', 'B', 'o', 'O', 'x', 'X', 'u', 'U' => {},
+                '0'...'9' => {},
+                '.' => {},
+                'b', 'B' => {},
+                'o', 'O' => {},
+                'x', 'X' => {},
+                'U', 'u' => {},
+                'F', 'f' => {},
+                'D', 'd' => {},
                 else => {
                     token.tag = .literal_number;
                     self.state = .start;
@@ -244,6 +261,9 @@ pub fn next(self: *Tokenizer) ?Token {
                     self.index += 1;
                     break;
                 },
+                '<' => {
+                    self.state = .double_left_angled_bracket;
+                },
                 else => {
                     token.tag = .left_angled_bracket;
                     self.state = .start;
@@ -257,8 +277,37 @@ pub fn next(self: *Tokenizer) ?Token {
                     self.index += 1;
                     break;
                 },
+                '>' => {
+                    self.state = .double_right_angled_bracket;
+                },
                 else => {
                     token.tag = .right_angled_bracket;
+                    self.state = .start;
+                    break;
+                },
+            },
+            .double_left_angled_bracket => switch (char) {
+                '=' => {
+                    token.tag = .double_left_angled_bracket_equals;
+                    self.state = .start;
+                    self.index += 1;
+                    break;
+                },
+                else => {
+                    token.tag = .double_left_angled_bracket;
+                    self.state = .start;
+                    break;
+                },
+            },
+            .double_right_angled_bracket => switch (char) {
+                '=' => {
+                    token.tag = .double_right_angled_bracket_equals;
+                    self.state = .start;
+                    self.index += 1;
+                    break;
+                },
+                else => {
+                    token.tag = .double_right_angled_bracket;
                     self.state = .start;
                     break;
                 },
@@ -274,6 +323,11 @@ pub fn next(self: *Tokenizer) ?Token {
                     token.tag = .plus_equals;
                     self.state = .start;
                     self.index += 1;
+                    break;
+                },
+                'A'...'z', '(' => {
+                    token.tag = .unary_plus;
+                    self.state = .start;
                     break;
                 },
                 else => {
@@ -295,9 +349,15 @@ pub fn next(self: *Tokenizer) ?Token {
                     self.index += 1;
                     break;
                 },
+                'A'...'z', '(' => {
+                    token.tag = .unary_minus;
+                    self.state = .start;
+                    break;
+                },
                 '0'...'9' => {
                     self.state = .literal_number;
                 },
+
                 else => {
                     token.tag = .minus;
                     self.state = .start;
@@ -330,6 +390,18 @@ pub fn next(self: *Tokenizer) ?Token {
                     break;
                 },
             },
+            .tilde => switch (char) {
+                'A'...'z', '(' => {
+                    token.tag = .unary_tilde;
+                    self.state = .start;
+                    break;
+                },
+                else => {
+                    token.tag = .tilde;
+                    self.state = .start;
+                    break;
+                },
+            },
             .equals => switch (char) {
                 '=' => {
                     token.tag = .equals_equals;
@@ -339,6 +411,19 @@ pub fn next(self: *Tokenizer) ?Token {
                 },
                 else => {
                     token.tag = .equals;
+                    self.state = .start;
+                    break;
+                },
+            },
+            .caret => switch (char) {
+                '=' => {
+                    token.tag = .caret_equals;
+                    self.state = .start;
+                    self.index += 1;
+                    break;
+                },
+                else => {
+                    token.tag = .caret;
                     self.state = .start;
                     break;
                 },
@@ -467,6 +552,22 @@ pub const Token = struct {
         keyword_vec3,
         keyword_vec4,
 
+        keyword_ivec2,
+        keyword_ivec3,
+        keyword_ivec4,
+
+        keyword_uvec2,
+        keyword_uvec3,
+        keyword_uvec4,
+
+        keyword_bvec2,
+        keyword_bvec3,
+        keyword_bvec4,
+
+        keyword_dvec2,
+        keyword_dvec3,
+        keyword_dvec4,
+
         keyword_true,
         keyword_false,
 
@@ -495,6 +596,10 @@ pub const Token = struct {
         right_bracket,
         left_angled_bracket,
         right_angled_bracket,
+        double_left_angled_bracket,
+        double_right_angled_bracket,
+        double_left_angled_bracket_equals,
+        double_right_angled_bracket_equals,
         left_paren,
         right_paren,
         semicolon,
@@ -508,6 +613,13 @@ pub const Token = struct {
         minus,
         minus_minus,
         minus_equals,
+        tilde,
+        unary_minus,
+        unary_plus,
+        unary_bang,
+        unary_tilde,
+        caret,
+        caret_equals,
         equals,
         equals_equals,
         bang,
@@ -574,6 +686,22 @@ pub const Token = struct {
                 .keyword_vec3 => "vec3",
                 .keyword_vec4 => "vec4",
 
+                .keyword_ivec2 => "ivec2",
+                .keyword_ivec3 => "ivec3",
+                .keyword_ivec4 => "ivec4",
+
+                .keyword_uvec2 => "uvec2",
+                .keyword_uvec3 => "uvec3",
+                .keyword_uvec4 => "uvec4",
+
+                .keyword_bvec2 => "bvec2",
+                .keyword_bvec3 => "bvec3",
+                .keyword_bvec4 => "bvec4",
+
+                .keyword_dvec2 => "dvec2",
+                .keyword_dvec3 => "dvec3",
+                .keyword_dvec4 => "dvec4",
+
                 .keyword_if => "if",
                 .keyword_else => "else",
                 .keyword_break => "break",
@@ -604,16 +732,23 @@ pub const Token = struct {
                 .period => ".",
                 .less_than_equals => "<=",
                 .greater_than_equals => ">=",
-                .plus => "+",
+                .double_left_angled_bracket => "<<",
+                .double_right_angled_bracket => ">>",
+                .double_left_angled_bracket_equals => "<<=",
+                .double_right_angled_bracket_equals => ">>=",
+                .plus, .unary_plus => "+",
                 .plus_plus => "++",
                 .plus_equals => "+=",
-                .minus => "-",
+                .minus, .unary_minus => "-",
                 .minus_minus => "--",
                 .minus_equals => "-=",
                 .equals => "=",
                 .equals_equals => "==",
-                .bang => "!",
+                .caret => "^",
+                .caret_equals => "^=",
+                .bang, .unary_bang => "!",
                 .bang_equals => "!=",
+                .tilde, .unary_tilde => "~",
                 .asterisk => "*",
                 .asterisk_equals => "*=",
                 .forward_slash => "/",
@@ -658,6 +793,19 @@ pub const Token = struct {
         .{ "vec2", .keyword_vec2 },
         .{ "vec3", .keyword_vec3 },
         .{ "vec4", .keyword_vec4 },
+        .{ "ivec2", .keyword_ivec2 },
+        .{ "ivec3", .keyword_ivec3 },
+        .{ "ivec4", .keyword_ivec4 },
+        .{ "uvec2", .keyword_uvec2 },
+        .{ "uvec3", .keyword_uvec3 },
+        .{ "uvec4", .keyword_uvec4 },
+        .{ "bvec2", .keyword_bvec2 },
+        .{ "bvec3", .keyword_bvec3 },
+        .{ "bvec4", .keyword_bvec4 },
+        .{ "dvec2", .keyword_dvec2 },
+        .{ "dvec3", .keyword_dvec3 },
+        .{ "dvec4", .keyword_dvec4 },
+
         .{ "if", .keyword_if },
         .{ "else", .keyword_else },
         .{ "break", .keyword_break },

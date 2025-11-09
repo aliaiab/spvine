@@ -23,7 +23,7 @@ pub fn build(builder: *std.Build) void {
         .root_module = spvine_module,
     });
 
-    const use_llvm = false;
+    const use_llvm = optimize == .ReleaseFast;
 
     exe.use_llvm = use_llvm;
     exe.use_lld = use_llvm;
