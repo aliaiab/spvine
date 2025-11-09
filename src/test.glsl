@@ -129,7 +129,7 @@ Light sussy(f32 c) {
 #if 1
 void main() {}
 
-Light sus(f32 c) {
+Light int(f32 c) {
     // f32 c = fmadd(2, 3, 3);
 
     Light light = Light();
@@ -183,6 +183,10 @@ Light sus(f32 c) {
 
 u32 light_compute(Light light) {
     return light.pos_x + light.pos_y * light.pos;
+}
+
+mat3x3 amongus(dmat3 m) {
+    return m;
 }
 
 uint hash1(uint n)
