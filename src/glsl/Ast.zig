@@ -2,15 +2,13 @@
 
 source: []const u8,
 source_name: []const u8,
-defines: ExpandingTokenizer.DefineMap,
-tokens: TokenList.Slice,
+defines: Parser.DefineMap,
 node_heap: NodeHeap,
 errors: []const Error,
 root_decls: []const NodeIndex,
 
 pub fn deinit(self: *Ast, allocator: std.mem.Allocator) void {
     defer self.* = undefined;
-    defer self.tokens.deinit(allocator);
     defer allocator.free(self.errors);
     defer self.defines.deinit(allocator);
     defer allocator.free(self.root_decls);
@@ -22,25 +20,17 @@ pub fn parse(
     source: []const u8,
     source_name: []const u8,
 ) !Ast {
-    var token_list = TokenList{};
-    defer token_list.deinit(allocator);
-
-    var tokenizer = ExpandingTokenizer.init(allocator, source);
-    errdefer tokenizer.deinit();
-
     var errors: std.ArrayList(Error) = .{};
     errdefer errors.deinit(allocator);
 
-    try tokenizer.tokenize(&token_list, &errors);
-
-    var parser = Parser.init(allocator, source, token_list.slice());
+    var parser = Parser.init(allocator, source);
     parser.errors = errors;
     defer parser.deinit();
 
     parser.parse() catch |e| {
         switch (e) {
             error.ExpectedToken => {},
-            error.UnexpectedToken => {},
+            // error.UnexpectedToken => {},
             else => return e,
         }
     };
@@ -48,9 +38,8 @@ pub fn parse(
     return Ast{
         .source = source,
         .source_name = source_name,
-        .tokens = token_list.toOwnedSlice(),
         .errors = try parser.errors.toOwnedSlice(allocator),
-        .defines = tokenizer.defines,
+        .defines = parser.defines,
         .root_decls = parser.root_decls,
         .node_heap = parser.node_heap,
     };
@@ -104,8 +93,9 @@ pub fn sourceStringLocation(self: Ast, source_string: []const u8) SourceLocation
 }
 
 pub fn tokenString(self: Ast, token_index: TokenIndex) []const u8 {
-    const token_start = self.tokens.items(.start)[@intFromEnum(token_index)];
-    const token_end = self.tokens.items(.end)[@intFromEnum(token_index)];
+    //TODO: handle multiple files
+    const token_start = token_index.string_start;
+    const token_end = token_index.string_start + token_index.string_length;
 
     return self.source[token_start..token_end];
 }
@@ -129,6 +119,10 @@ fn nodeStringRecursive(
     node: NodeIndex,
     parent_range: SourceStringRange,
 ) SourceStringRange {
+    if (node == Ast.NodeIndex.nil) {
+        @panic("Node cannot be null");
+    }
+
     var maybe_token: ?TokenIndex = null;
 
     var result_range: SourceStringRange = parent_range;
@@ -191,14 +185,18 @@ fn nodeStringRecursive(
                 .end = rhs_range.end,
             };
         },
+        .type_expr => {
+            const identifier: Node.TypeExpr = self.dataFromNode(node, .type_expr);
+            maybe_token = identifier.token;
+        },
         else => {
             @panic(@tagName(node.tag));
         },
     }
 
     if (maybe_token) |token| {
-        const op_token_start = self.tokens.items(.start)[@intFromEnum(token)];
-        const op_token_end = self.tokens.items(.end)[@intFromEnum(token)];
+        const op_token_start = token.string_start;
+        const op_token_end = token.string_start + token.string_length;
 
         result_range.start = @max(parent_range.start, op_token_start);
         result_range.end = @min(parent_range.end, op_token_end);
@@ -269,8 +267,39 @@ pub const Error = struct {
 
 pub const TokenList = std.MultiArrayList(Token);
 
-pub const TokenIndex = enum(u32) {
-    _,
+pub const TokenIndex = packed struct(u64) {
+    string_start: u32,
+    tag: Token.Tag,
+    ///This is the spec defined limit for identifiers, which are the longest tokens
+    string_length: u10,
+    ///Index into the file table, specifies which included file the token is from
+    file_index: u14,
+
+    pub const invalid: TokenIndex = .{ .file_index = 0, .tag = .invalid, .string_length = 0, .string_start = 0 };
+
+    pub const end_of_file: TokenIndex = .{ .file_index = 0, .tag = .end_of_file, .string_length = 0, .string_start = 0 };
+
+    pub fn fromToken(
+        root_source: []const u8,
+        sub_source: []const u8,
+        token: Token,
+    ) TokenIndex {
+        const sub_source_start: usize = @intFromPtr(sub_source.ptr) - @intFromPtr(root_source.ptr);
+        const token_start = sub_source_start + token.start;
+        const token_end = sub_source_start + token.end;
+
+        const string_start: u32 = @intCast(token_start);
+
+        const string_length: u10 = @intCast(token_end - token_start);
+
+        return .{
+            //TODO: handle multiple files
+            .file_index = 0,
+            .string_start = string_start,
+            .string_length = string_length,
+            .tag = token.tag,
+        };
+    }
 };
 
 pub const NodeIndex = packed struct(u32) {
@@ -629,5 +658,4 @@ const std = @import("std");
 const Ast = @This();
 const Sema = @import("Sema.zig");
 const Token = @import("Tokenizer.zig").Token;
-const ExpandingTokenizer = @import("ExpandingTokenizer.zig");
 const Parser = @import("Parser.zig");

@@ -1,9 +1,27 @@
-#version 450
+// #version 450
+
+struct Lol {
+    int a;
+};
+
+#define SEVEN 7
+#define SOME_CONST_2 (6 - SEVEN)
+#define SOME_CONST 1 + 3 * SOME_CONST_2 + 4
+
+Lol hash1(uint n)
+{
+    // hash by Hugo Elias
+    n = (n << 13) ^ n;
+    // return n * (n * n * 15731 + 789221) + 1376312589;
+    n = SEVEN;
+}
+
+#if 0
 
 #define f32 float
 #define u32 uint
 
-#define NUM 0
+// #define NUM 0
 
 vec2 sussyBakka(vec2 c) {
     // return sus(c * 3) + sus(1) + sus(3.2);
@@ -129,7 +147,7 @@ Light sussy(f32 c) {
 #if 1
 void main() {}
 
-Light int(f32 c) {
+Light sus(f32 c) {
     // f32 c = fmadd(2, 3, 3);
 
     Light light = Light();
@@ -188,10 +206,4 @@ u32 light_compute(Light light) {
 mat3x3 amongus(dmat3 m) {
     return m;
 }
-
-uint hash1(uint n)
-{
-    // hash by Hugo Elias
-    n = (n << 13) ^ n;
-    return n * (n * n * 15731 + 789221) + 1376312589;
-}
+#endif

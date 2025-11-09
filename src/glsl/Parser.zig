@@ -2,12 +2,21 @@
 
 allocator: std.mem.Allocator,
 source: []const u8,
-token_tags: []const Token.Tag,
-token_starts: []const u32,
-token_ends: []const u32,
-token_index: u32,
+tokenizer: Tokenizer,
+///Stores a centered slice of the token stream
+///The centre (token_window[1]) is the current token
+token_window: TokenWindow = [1]Ast.TokenIndex{.invalid} ** 3,
+defines: DefineMap = .{},
+///This is the generation of #define we're currently on
+define_generation: u32 = 0,
+tokenizer_stack: std.ArrayList(struct {
+    token_window: TokenWindow,
+    //This may be able to be inferred from the token window (bar the retained state within Tokenizer)
+    tokenizer: Tokenizer,
+    define_generation: u32,
+}) = .{},
 node_context_stack: std.ArrayList(struct {
-    saved_token_index: u32,
+    saved_token_window: TokenWindow,
     saved_error_index: u32,
 }),
 errors: std.ArrayList(Ast.Error),
@@ -17,15 +26,11 @@ root_decls: []Ast.NodeIndex,
 pub fn init(
     allocator: std.mem.Allocator,
     source: []const u8,
-    tokens: Ast.TokenList.Slice,
 ) Parser {
     return .{
         .allocator = allocator,
         .source = source,
-        .token_tags = tokens.items(.tag),
-        .token_starts = tokens.items(.start),
-        .token_ends = tokens.items(.end),
-        .token_index = 0,
+        .tokenizer = Tokenizer.init(source),
         .node_context_stack = .{},
         .errors = .{},
         .root_decls = &.{},
@@ -41,98 +46,67 @@ pub fn deinit(self: *Parser) void {
 
 ///Root parse node
 pub fn parse(self: *Parser) !void {
-    var state: enum {
-        start,
-        directive,
-    } = .start;
-
     var root_nodes: std.ArrayList(Ast.NodeIndex) = .{};
     defer root_nodes.deinit(self.allocator);
 
-    _ = try self.expectToken(.directive_version);
-    _ = try self.expectToken(.literal_number);
+    //Init the token window
+    self.token_window[0] = .invalid;
+    self.token_window[1] = try self.advanceTokenizer();
+    self.token_window[2] = try self.advanceTokenizer();
 
-    while (self.token_index < self.token_tags.len) {
-        switch (state) {
-            .start => switch (self.token_tags[self.token_index]) {
-                .directive_define,
-                .directive_undef,
-                .directive_if,
-                .directive_ifdef,
-                .directive_ifndef,
-                .directive_else,
-                .directive_elif,
-                .directive_endif,
-                .directive_error,
-                .directive_pragma,
-                .directive_extension,
-                .directive_version,
-                .directive_line,
-                => {
-                    state = .directive;
-                    _ = self.nextToken();
-                },
-                .keyword_struct => {
-                    const struct_def = try self.parseStruct();
+    while (self.peekToken().tag != .end_of_file) {
+        switch (self.peekToken().tag) {
+            .keyword_struct => {
+                const struct_def = try self.parseStruct();
 
-                    try root_nodes.append(self.allocator, struct_def);
-                },
-                .keyword_float,
-                .keyword_double,
-                .keyword_uint,
-                .keyword_int,
-                .keyword_bool,
-                .keyword_vec2,
-                .keyword_vec3,
-                .keyword_vec4,
-                .keyword_ivec2,
-                .keyword_ivec3,
-                .keyword_ivec4,
-                .keyword_uvec2,
-                .keyword_uvec3,
-                .keyword_uvec4,
-                .keyword_bvec2,
-                .keyword_bvec3,
-                .keyword_bvec4,
-                .keyword_dvec2,
-                .keyword_dvec3,
-                .keyword_dvec4,
-                .keyword_mat2x2,
-                .keyword_mat3x3,
-                .keyword_mat4x4,
-                .keyword_mat2x3,
-                .keyword_mat3x4,
-                .keyword_mat3x2,
-                .keyword_mat4x3,
-                .keyword_dmat2,
-                .keyword_dmat3,
-                .keyword_dmat4,
-                .keyword_dmat2x2,
-                .keyword_dmat3x3,
-                .keyword_dmat4x4,
-                .keyword_dmat2x3,
-                .keyword_dmat3x4,
-                .keyword_dmat3x2,
-                .keyword_dmat4x3,
-                .keyword_void,
-                .identifier,
-                => {
-                    const proc = try self.parseProcedure();
-
-                    try root_nodes.append(self.allocator, proc);
-                },
-                else => {
-                    _ = self.nextToken();
-                },
+                try root_nodes.append(self.allocator, struct_def);
             },
-            .directive => switch (self.token_tags[self.token_index]) {
-                .directive_end => {
-                    state = .start;
-                    _ = self.nextToken();
-                },
-                else => {
-                    _ = self.nextToken();
-                },
+            .keyword_float,
+            .keyword_double,
+            .keyword_uint,
+            .keyword_int,
+            .keyword_bool,
+            .keyword_vec2,
+            .keyword_vec3,
+            .keyword_vec4,
+            .keyword_ivec2,
+            .keyword_ivec3,
+            .keyword_ivec4,
+            .keyword_uvec2,
+            .keyword_uvec3,
+            .keyword_uvec4,
+            .keyword_bvec2,
+            .keyword_bvec3,
+            .keyword_bvec4,
+            .keyword_dvec2,
+            .keyword_dvec3,
+            .keyword_dvec4,
+            .keyword_mat2x2,
+            .keyword_mat3x3,
+            .keyword_mat4x4,
+            .keyword_mat2x3,
+            .keyword_mat3x4,
+            .keyword_mat3x2,
+            .keyword_mat4x3,
+            .keyword_dmat2,
+            .keyword_dmat3,
+            .keyword_dmat4,
+            .keyword_dmat2x2,
+            .keyword_dmat3x3,
+            .keyword_dmat4x4,
+            .keyword_dmat2x3,
+            .keyword_dmat3x4,
+            .keyword_dmat3x2,
+            .keyword_dmat4x3,
+            .keyword_void,
+            .identifier,
+            => {
+                const proc = try self.parseProcedure();
+
+                try root_nodes.append(self.allocator, proc);
+            },
+            else => {
+                _ = self.nextToken();
             },
         }
     }
@@ -225,7 +199,7 @@ pub fn parseParamList(self: *Parser) !Ast.NodeIndex {
 
         try param_nodes.append(self.allocator, param);
 
-        if (self.lookAheadTokenTag(1).? != .right_paren) {
+        if (self.lookAheadTokenTag(1) != .right_paren) {
             _ = self.eatToken(.comma);
         }
     }
@@ -351,7 +325,9 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
         .identifier,
         => |token_tag| {
             if (token_tag == .identifier) {
-                if (self.lookAheadTokenTag(1)) |next_token| {
+                const next_token = self.lookAheadTokenTag(1);
+
+                if (next_token != .end_of_file) {
                     if (next_token != .identifier) {
                         defer _ = self.eatToken(.semicolon);
 
@@ -675,7 +651,7 @@ pub fn parseExpression(
                 }
             },
             inline else => |tag| {
-                const op_token: Ast.TokenIndex = @enumFromInt(self.token_index);
+                const op_token: Ast.TokenIndex = self.peekToken();
 
                 defer switch (tag) {
                     .left_bracket => {
@@ -721,7 +697,7 @@ pub fn parseExpression(
 }
 
 pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
-    switch (self.token_tags[self.token_index]) {
+    switch (self.peekToken().tag) {
         .keyword_float,
         .keyword_double,
         .keyword_uint,
@@ -765,9 +741,9 @@ pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
             var node = try self.reserveNode(.type_expr);
             errdefer self.unreserveNode(node);
 
-            defer self.token_index += 1;
+            defer _ = self.nextToken();
 
-            try self.nodeSetData(&node, .type_expr, .{ .token = @enumFromInt(self.token_index) });
+            try self.nodeSetData(&node, .type_expr, .{ .token = self.peekToken() });
 
             return node;
         },
@@ -779,7 +755,7 @@ pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
 
 pub fn reserveNode(self: *Parser, comptime tag: Ast.Node.Tag) !Ast.NodeIndex {
     try self.node_context_stack.append(self.allocator, .{
-        .saved_token_index = self.token_index,
+        .saved_token_window = self.token_window,
         .saved_error_index = @intCast(self.errors.items.len),
     });
 
@@ -796,7 +772,7 @@ pub fn unreserveNode(self: *Parser, node: Ast.NodeIndex) void {
 
     const context = self.node_context_stack.pop().?;
 
-    self.token_index = context.saved_token_index;
+    self.token_window = context.saved_token_window;
 }
 
 pub fn nodeSetData(
@@ -810,22 +786,10 @@ pub fn nodeSetData(
     self.node_heap.getNodePtr(Tag, node.index).* = value;
 }
 
-pub fn tokenIndexString(self: Parser, token_index: u32) []const u8 {
-    return self.tokenString(.{
-        .start = self.token_starts[token_index],
-        .end = self.token_ends[token_index],
-        .tag = self.token_tags[token_index],
-    });
-}
-
-pub fn tokenString(self: Parser, token: Token) []const u8 {
-    return self.source[token.start..token.end];
-}
-
 pub fn expectToken(self: *Parser, tag: Token.Tag) !Ast.TokenIndex {
     errdefer self.errors.append(self.allocator, .{
         .tag = .expected_token,
-        .anchor = .{ .token = @enumFromInt(self.token_index) },
+        .anchor = .{ .token = self.peekToken() },
         .data = .{
             .expected_token = tag,
         },
@@ -835,16 +799,16 @@ pub fn expectToken(self: *Parser, tag: Token.Tag) !Ast.TokenIndex {
 }
 
 pub fn unexpectedToken(self: *Parser) anyerror {
-    if (self.token_tags[self.token_index] != .invalid) self.errors.append(self.allocator, .{
+    if (self.peekToken().tag != .invalid) self.errors.append(self.allocator, .{
         .tag = .unexpected_token,
-        .anchor = .{ .token = @enumFromInt(self.token_index) },
+        .anchor = .{ .token = self.peekToken() },
     }) catch unreachable;
 
     return error.UnexpectedToken;
 }
 
 pub fn eatToken(self: *Parser, tag: Token.Tag) ?Ast.TokenIndex {
-    if (self.token_index < self.token_tags.len and self.peekTokenTag() != null and self.peekTokenTag() == tag) {
+    if (self.peekToken().tag == tag) {
         return self.nextToken();
     } else {
         return null;
@@ -852,19 +816,28 @@ pub fn eatToken(self: *Parser, tag: Token.Tag) ?Ast.TokenIndex {
 }
 
 pub fn nextToken(self: *Parser) ?Ast.TokenIndex {
-    const result = self.peekToken();
+    //window: previous current next
+    //new window: current next next + 1
 
-    self.token_index += 1;
+    const current_window = self.token_window;
 
-    return result;
+    self.token_window[0] = current_window[1];
+    self.token_window[1] = current_window[2];
+
+    //TODO: handle this error
+    const token = self.advanceTokenizer() catch @panic("Tokenizer advance failed");
+
+    self.token_window[2] = token;
+
+    return current_window[1];
 }
 
-pub fn previousToken(self: Parser) u32 {
-    return self.token_index - 1;
+pub fn previousToken(self: Parser) Ast.TokenIndex {
+    return self.lookAheadToken(-1);
 }
 
 pub fn previousTokenTag(self: Parser) Token.Tag {
-    return self.token_tags[self.previousToken()];
+    return self.previousToken().tag;
 }
 
 pub fn nextTokenTag(self: *Parser) ?Token.Tag {
@@ -872,29 +845,284 @@ pub fn nextTokenTag(self: *Parser) ?Token.Tag {
 }
 
 pub fn peekTokenTag(self: Parser) ?Token.Tag {
-    return self.lookAheadTokenTag(0);
+    return self.token_window[1].tag;
 }
 
-pub fn lookAheadTokenTag(self: Parser, amount: u32) ?Token.Tag {
-    return self.token_tags[@intFromEnum(self.lookAheadToken(amount) orelse return null)];
+pub fn lookAheadTokenTag(self: Parser, comptime amount: comptime_int) Token.Tag {
+    const token = self.lookAheadToken(amount);
+
+    return token.tag;
 }
 
-//TODO: support preprocessor directives inside function bodies by modifying this to allow that
-pub fn peekToken(self: Parser) ?Ast.TokenIndex {
-    return self.lookAheadToken(0);
+pub fn peekToken(self: Parser) Ast.TokenIndex {
+    return self.token_window[1];
 }
 
-pub fn lookAheadToken(self: Parser, amount: u32) ?Ast.TokenIndex {
-    const result = self.token_index + amount;
-
-    if (result >= self.token_tags.len) {
-        return null;
+pub fn lookAheadToken(self: Parser, comptime amount: comptime_int) Ast.TokenIndex {
+    if (@abs(amount) > 1) {
+        @compileError("Token lookahead exhausts the token window buffer!");
     }
 
-    return @enumFromInt(result);
+    //token_window[1] is the centre (current token)
+    return self.token_window[1 + amount];
 }
+
+pub fn pushTokenizerState(self: *Parser, new_source_range: Tokenizer.SourceRange, new_define_generation: u32) !void {
+    const saved_state = try self.tokenizer_stack.addOne(self.allocator);
+
+    saved_state.define_generation = self.define_generation;
+    saved_state.token_window = self.token_window;
+    saved_state.tokenizer = self.tokenizer;
+
+    self.tokenizer = .init(self.source[new_source_range.start..new_source_range.end]);
+    self.define_generation = new_define_generation;
+}
+
+pub fn popTokenizerState(self: *Parser) !void {
+    const old_state = self.tokenizer_stack.pop() orelse return;
+
+    self.token_window = old_state.token_window;
+    self.define_generation = old_state.define_generation;
+    self.tokenizer = old_state.tokenizer;
+}
+
+pub fn advanceTokenizer(self: *Parser) anyerror!Ast.TokenIndex {
+    while (self.tokenizer.next()) |token| {
+        switch (token.tag) {
+            .invalid => {
+                try self.errors.append(self.allocator, .{
+                    .tag = .invalid_token,
+                    .anchor = .{ .token = .fromToken(self.source, self.tokenizer.source, token) },
+                });
+
+                return .fromToken(self.source, self.tokenizer.source, token);
+            },
+            .reserved_keyword => {
+                try self.errors.append(self.allocator, .{
+                    .tag = .reserved_keyword_token,
+                    .anchor = .{ .token = .fromToken(self.source, self.tokenizer.source, token) },
+                });
+
+                return .fromToken(self.source, self.tokenizer.source, token);
+            },
+            .directive_version => {
+                const string = "__VERSION__";
+
+                const define = self.defines.getOrPut(self.allocator, string) catch unreachable;
+                _ = define; // autofix
+
+                const next_token = self.tokenizer.next();
+                _ = next_token; // autofix
+
+                //TODO: add expected literal number error here
+                //TODO: handle the defining of __VERSION__
+
+                // define.value_ptr.start_token = .fromToken(next_token.?);
+            },
+            .directive_if,
+            .directive_ifdef,
+            .directive_ifndef,
+            => {
+                const identifier_token = self.tokenizer.next() orelse break;
+                const identifier_actual_token: Ast.TokenIndex = .fromToken(self.source, self.tokenizer.source, identifier_token);
+
+                const condition_string = self.source[identifier_actual_token.string_length .. identifier_actual_token.string_start + identifier_actual_token.string_length];
+
+                //TODO: handle preprocessor errors
+                var if_condition = false;
+
+                switch (token.tag) {
+                    .directive_if => {
+                        switch (identifier_token.tag) {
+                            .identifier => {
+                                const string = condition_string;
+
+                                const define_source_range, const define_source_generation = self.directiveResolveMacro(
+                                    string,
+                                ) orelse @panic("TODO: error message not implemented");
+                                _ = define_source_generation; // autofix
+
+                                var define_tokenizer: Tokenizer = .init(self.source[define_source_range.start..define_source_range.end]);
+
+                                //TODO: handle preprocessor expressions
+                                const value_token = define_tokenizer.next().?;
+
+                                const value = try std.fmt.parseUnsigned(
+                                    u64,
+                                    self.tokenizer.source[value_token.start..value_token.end],
+                                    10,
+                                );
+                                if_condition = value != 0;
+                            },
+                            .literal_number => {
+                                const value = try std.fmt.parseUnsigned(
+                                    u64,
+                                    self.tokenizer.source[identifier_token.start..identifier_token.end],
+                                    10,
+                                );
+                                if_condition = value != 0;
+
+                                std.log.info("if_condition = {}", .{if_condition});
+                            },
+                            else => unreachable,
+                        }
+                    },
+                    .directive_ifdef => {
+                        if_condition = self.defines.contains(condition_string);
+                    },
+                    .directive_ifndef => {
+                        if_condition = !self.defines.contains(condition_string);
+                    },
+                    else => unreachable,
+                }
+
+                if (if_condition) continue;
+
+                var if_condition_level: u32 = 0;
+
+                while (true) loop_skip: {
+                    _ = self.tokenizer.advanceUntilNextDirective();
+
+                    //TODO: handle preprocessor errors
+                    const directive_token = self.tokenizer.next() orelse break;
+
+                    switch (directive_token.tag) {
+                        .directive_if,
+                        .directive_ifdef,
+                        .directive_ifndef,
+                        => {
+                            if_condition_level += 1;
+                        },
+                        .directive_endif => {
+                            if_condition_level -|= 1;
+
+                            if (if_condition_level == 0) {
+                                break :loop_skip;
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            },
+            .directive_endif => {
+                //TODO: handle trailing endifs
+            },
+            .directive_define => {
+                const identifier_token = self.tokenizer.next() orelse break;
+
+                const string = self.tokenizer.source[identifier_token.start..identifier_token.end];
+
+                std.log.info("defining: '{s}'", .{string});
+
+                self.define_generation += 1;
+
+                const define = self.defines.getOrPut(self.allocator, string) catch unreachable;
+
+                if (!define.found_existing) {
+                    define.value_ptr.* = .{};
+                }
+
+                //TODO: cache the tokenisation of defines to avoid repeat tokenization, with a heuristic based on text size vs token list size
+
+                //TODO: handle errors
+
+                //keep going until new line
+                //TODO: handle line continuation
+                const line_range = self.tokenizer.advanceLineRange();
+
+                std.log.info("defining: '{s}' as '{s}'", .{ string, self.source[line_range.start..line_range.end] });
+
+                try define.value_ptr.*.generation_to_definition.put(self.allocator, self.define_generation, line_range);
+            },
+            .directive_undef => {
+                const identifier_token = self.tokenizer.next() orelse break;
+
+                _ = self.defines.remove(self.tokenizer.source[identifier_token.start..identifier_token.end]);
+            },
+            .directive_error => {
+                try self.errors.append(self.allocator, .{
+                    .tag = .directive_error,
+                    .anchor = .{ .token = .fromToken(self.source, self.tokenizer.source, token) },
+                });
+            },
+            .directive_end => {},
+            .identifier => {
+                const macro_resolved_range, const macro_resolved_generation = self.directiveResolveMacro(self.tokenizer.source[token.start..token.end]) orelse {
+                    return .fromToken(self.source, self.tokenizer.source, token);
+                };
+
+                std.log.info("Macro resolved to: '{s}'", .{self.source[macro_resolved_range.start..macro_resolved_range.end]});
+
+                try self.pushTokenizerState(macro_resolved_range, macro_resolved_generation);
+
+                const macro_token = try self.advanceTokenizer();
+
+                std.log.info("Macro first token '{}'", .{macro_token.tag});
+
+                return macro_token;
+            },
+            .directive_line,
+            .directive_include,
+            => {
+                try self.errors.append(self.allocator, .{
+                    .tag = .unsupported_directive,
+                    .anchor = .{ .token = .fromToken(self.source, self.tokenizer.source, token) },
+                });
+            },
+            else => {
+                return .fromToken(self.source, self.tokenizer.source, token);
+            },
+        }
+    }
+
+    if (self.tokenizer_stack.items.len > 0) {
+        try self.popTokenizerState();
+
+        return self.nextToken().?;
+    }
+
+    return .end_of_file;
+}
+
+//TODO: make this a distinct enum type?
+const DefineGeneration = u32;
+
+fn directiveResolveMacro(
+    self: *Parser,
+    string: []const u8,
+) ?struct { Tokenizer.SourceRange, DefineGeneration } {
+    const define = self.defines.get(string) orelse return null;
+
+    var most_recent_define_generation: u32 = 0;
+    var most_recent_define_index: ?u32 = 0;
+
+    for (define.generation_to_definition.keys(), 0..) |define_generation, index| {
+        if (define_generation <= self.define_generation) {
+            most_recent_define_generation = @max(most_recent_define_generation, define_generation);
+
+            if (define_generation >= most_recent_define_generation) {
+                most_recent_define_index = @intCast(index);
+            }
+        }
+    }
+
+    if (most_recent_define_index == null) return null;
+
+    return .{ define.generation_to_definition.values()[most_recent_define_index.?], most_recent_define_generation };
+}
+
+pub const TokenWindow = [3]Ast.TokenIndex;
+
+pub const Define = struct {
+    //TODO: handle multiple files
+    generation_to_definition: std.AutoArrayHashMapUnmanaged(u32, Tokenizer.SourceRange) = .{},
+};
+
+pub const DefineMap = token_map.Map(Define);
 
 const std = @import("std");
 const Parser = @This();
 const Ast = @import("Ast.zig");
-const Token = @import("Tokenizer.zig").Token;
+const token_map = @import("token_map.zig");
+const Token = Tokenizer.Token;
+const Tokenizer = @import("Tokenizer.zig");

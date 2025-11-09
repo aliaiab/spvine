@@ -42,12 +42,6 @@ pub fn main() !void {
         // std.log.info("def: tok_idx: {}, tok_tag: {}, str: {s}", .{ val.start_token, ast.tokens.items(.tag)[val.start_token], ast.tokenString(val.start_token) });
     }
 
-    for (ast.tokens.items(.tag), 0..) |token_tag, token_index| {
-        _ = token_tag; // autofix
-        _ = token_index; // autofix
-        // std.log.info("token_tag: {s}, '{s}'", .{ @tagName(token_tag), ast.tokenString(@intCast(token_index)) });
-    }
-
     if (ast.errors.len != 0) {
         glsl.error_render.printErrors(test_glsl_path, ast, null, ast.errors, stderr);
 

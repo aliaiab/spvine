@@ -429,7 +429,11 @@ pub fn analyseStatement(
                 .null => {
                     try self.errors.append(self.gpa, .{
                         .tag = .type_mismatch,
-                        .anchor = .{ .node = statement_return.expression },
+                        .anchor = if (statement_return.expression != Ast.NodeIndex.nil) .{
+                            .node = statement_return.expression,
+                        } else .{
+                            .token = statement_return.return_token,
+                        },
                         .data = .{
                             .type_mismatch = .{
                                 .lhs_type = procedure.general_data.return_type,
@@ -687,7 +691,7 @@ pub fn resolveTypeFromTypeExpr(self: *Sema, ast: Ast, type_expr: Ast.NodeIndex) 
 }
 
 pub fn resolveTypeFromIdentifier(self: *Sema, ast: Ast, type_expr_token: Ast.TokenIndex) !TypeIndex {
-    const token_tag: Token.Tag = ast.tokens.items(.tag)[@intFromEnum(type_expr_token)];
+    const token_tag: Token.Tag = type_expr_token.tag;
 
     return switch (token_tag) {
         .keyword_uint => .uint,
@@ -749,7 +753,7 @@ pub fn resolveTypeFromIdentifier(self: *Sema, ast: Ast, type_expr_token: Ast.Tok
 }
 
 pub fn resolveTypeFromIdentifierNoError(self: *Sema, ast: Ast, type_expr_token: Ast.TokenIndex) ?TypeIndex {
-    const token_tag: Token.Tag = ast.tokens.items(.tag)[@intFromEnum(type_expr_token)];
+    const token_tag: Token.Tag = type_expr_token.tag;
 
     return switch (token_tag) {
         .keyword_uint => .uint,
@@ -801,7 +805,7 @@ pub fn resolveTypeFromIdentifierNoError(self: *Sema, ast: Ast, type_expr_token: 
 
             return type_index;
         },
-        else => unreachable,
+        else => @panic(@tagName(token_tag)),
     };
 }
 
