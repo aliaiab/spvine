@@ -829,6 +829,8 @@ pub fn nextToken(self: *Parser) ?Ast.TokenIndex {
 
     self.token_window[2] = token;
 
+    std.log.info("token window: ({}, {}, {})", .{ self.token_window[0].tag, self.token_window[1].tag, token.tag });
+
     return current_window[1];
 }
 
@@ -871,7 +873,6 @@ pub fn pushTokenizerState(self: *Parser, new_source_range: Tokenizer.SourceRange
     const saved_state = try self.tokenizer_stack.addOne(self.allocator);
 
     saved_state.define_generation = self.define_generation;
-    saved_state.token_window = self.token_window;
     saved_state.tokenizer = self.tokenizer;
 
     self.tokenizer = .init(self.source[new_source_range.start..new_source_range.end]);
@@ -881,7 +882,6 @@ pub fn pushTokenizerState(self: *Parser, new_source_range: Tokenizer.SourceRange
 pub fn popTokenizerState(self: *Parser) !void {
     const old_state = self.tokenizer_stack.pop() orelse return;
 
-    self.token_window = old_state.token_window;
     self.define_generation = old_state.define_generation;
     self.tokenizer = old_state.tokenizer;
 }
@@ -1078,7 +1078,7 @@ pub fn advanceTokenizer(self: *Parser) anyerror!Ast.TokenIndex {
     if (self.tokenizer_stack.items.len > 0) {
         try self.popTokenizerState();
 
-        return self.nextToken().?;
+        return try self.advanceTokenizer();
     }
 
     return .end_of_file;

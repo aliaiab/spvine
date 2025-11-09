@@ -8,18 +8,21 @@ struct Lol {
 #define SOME_CONST_2 (6 - SEVEN)
 #define SOME_CONST 1 + 3 * SOME_CONST_2 + 4
 
+#define f32 float
+#define u32 uint
+
 Lol hash1(uint n)
 {
     // hash by Hugo Elias
     n = (n << 13) ^ n;
     // return n * (n * n * 15731 + 789221) + 1376312589;
-    n = SEVEN;
+    n = SOME_CONST;
+
+    return u32(0);
 }
 
 #if 0
 
-#define f32 float
-#define u32 uint
 
 // #define NUM 0
 
