@@ -495,12 +495,12 @@ fn typeDisplayName(self: *Sema, ast: Ast, type_index: Sema.TypeIndex) []const u8
     var canonical_type: Sema.TypeIndex = type_index;
 
     if (canonical_type.toArrayIndex() == null) {
-        var primitive_type: Sema.TypeIndex.PrimitiveNumericType = @bitCast(@intFromEnum(canonical_type));
+        var primitive_type: Sema.TypeIndex.TypeIndexData = @bitCast(@intFromEnum(canonical_type));
 
         //literal_* types should be displayed as just their runtime type for clarity
         primitive_type.literal = 0;
 
-        canonical_type = @enumFromInt(@as(u32, @bitCast(primitive_type)));
+        canonical_type = @enumFromInt(@as(u64, @bitCast(primitive_type)));
     }
 
     return self.typeName(ast, canonical_type);

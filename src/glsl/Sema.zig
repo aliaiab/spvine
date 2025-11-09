@@ -596,14 +596,14 @@ pub fn analyseArgList(
 
             const expr_type = try self.resolveTypeFromExpression(ast, node);
 
-            var expr_type_prim: TypeIndex.PrimitiveNumericType = @bitCast(@intFromEnum(expr_type));
+            var expr_type_prim: TypeIndex.TypeIndexData = @bitCast(@intFromEnum(expr_type));
 
             //This canonicalizes primitive types like literal_uint -> uint
             if (expr_type.toArrayIndex() == null) {
                 expr_type_prim.literal = 0;
             }
 
-            state.type_buffer[position] = @enumFromInt(@as(u32, @bitCast(expr_type_prim)));
+            state.type_buffer[position] = @enumFromInt(@as(u64, @bitCast(expr_type_prim)));
             state.node_buffer[position] = node;
 
             return .{ state.type_buffer[0 .. position + 1], state.node_buffer[0 .. position + 1] };
@@ -717,6 +717,21 @@ pub fn resolveTypeFromIdentifier(self: *Sema, ast: Ast, type_expr_token: Ast.Tok
         .keyword_dvec3 => .dvec3,
         .keyword_dvec4 => .dvec4,
 
+        .keyword_mat2, .keyword_mat2x2 => .mat2,
+        .keyword_mat3, .keyword_mat3x3 => .mat3,
+        .keyword_mat4, .keyword_mat4x4 => .mat4,
+        .keyword_mat2x3 => .mat2x3,
+        .keyword_mat3x4 => .mat3x4,
+        .keyword_mat3x2 => .mat3x2,
+        .keyword_mat4x3 => .mat4x3,
+        .keyword_dmat2, .keyword_dmat2x2 => .dmat2,
+        .keyword_dmat3, .keyword_dmat3x3 => .dmat3,
+        .keyword_dmat4, .keyword_dmat4x4 => .dmat4,
+        .keyword_dmat2x3 => .dmat2x3,
+        .keyword_dmat3x4 => .dmat3x4,
+        .keyword_dmat3x2 => .dmat3x2,
+        .keyword_dmat4x3 => .dmat4x3,
+
         .identifier => {
             const type_index = self.type_map.get(ast.tokenString(type_expr_token)) orelse {
                 try self.errors.append(self.gpa, .{
@@ -763,6 +778,22 @@ pub fn resolveTypeFromIdentifierNoError(self: *Sema, ast: Ast, type_expr_token: 
         .keyword_dvec2 => .dvec2,
         .keyword_dvec3 => .dvec3,
         .keyword_dvec4 => .dvec4,
+
+        .keyword_mat2, .keyword_mat2x2 => .mat2,
+        .keyword_mat3, .keyword_mat3x3 => .mat3,
+        .keyword_mat4, .keyword_mat4x4 => .mat4,
+        .keyword_mat2x3 => .mat2x3,
+        .keyword_mat3x4 => .mat3x4,
+        .keyword_mat3x2 => .mat3x2,
+        .keyword_mat4x3 => .mat4x3,
+        .keyword_dmat2, .keyword_dmat2x2 => .dmat2,
+        .keyword_dmat3, .keyword_dmat3x3 => .dmat3,
+        .keyword_dmat4, .keyword_dmat4x4 => .dmat4,
+        .keyword_dmat2x3 => .dmat2x3,
+        .keyword_dmat3x4 => .dmat3x4,
+        .keyword_dmat3x2 => .dmat3x2,
+        .keyword_dmat4x3 => .dmat4x3,
+
         .identifier => {
             const type_index = self.type_map.get(ast.tokenString(type_expr_token)) orelse {
                 return null;
@@ -1086,8 +1117,8 @@ pub fn isExpressionAssignable(self: *Sema, ast: Ast, expression: Ast.NodeIndex) 
 
 pub fn coerceTypeAssign(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
     const result_type = coerceType(lhs, rhs);
-    const lhs_primitive: TypeIndex.PrimitiveNumericType = @bitCast(@intFromEnum(lhs));
-    const type_primitive: TypeIndex.PrimitiveNumericType = @bitCast(@intFromEnum(result_type));
+    const lhs_primitive: TypeIndex.TypeIndexData = @bitCast(@intFromEnum(lhs));
+    const type_primitive: TypeIndex.TypeIndexData = @bitCast(@intFromEnum(result_type));
 
     if (lhs_primitive.scalar_type == .integer and type_primitive.scalar_type != .integer) {
         return .null;
@@ -1109,11 +1140,11 @@ pub fn coerceType(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
         return .null;
     }
 
-    const lhs_primitive: TypeIndex.PrimitiveNumericType = @bitCast(@intFromEnum(lhs));
-    const rhs_primitive: TypeIndex.PrimitiveNumericType = @bitCast(@intFromEnum(rhs));
+    const lhs_primitive: TypeIndex.TypeIndexData = @bitCast(@intFromEnum(lhs));
+    const rhs_primitive: TypeIndex.TypeIndexData = @bitCast(@intFromEnum(rhs));
 
-    if (lhs_primitive.linear_algebra_type != rhs_primitive.linear_algebra_type or
-        lhs_primitive.component_count != rhs_primitive.component_count)
+    if (lhs_primitive.matrix_row_count != rhs_primitive.matrix_row_count or
+        lhs_primitive.matrix_column_count != rhs_primitive.matrix_column_count)
     {
         return .null;
     }
@@ -1124,7 +1155,7 @@ pub fn coerceType(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
         }
     }
 
-    var result_type: TypeIndex.PrimitiveNumericType = lhs_primitive;
+    var result_type: TypeIndex.TypeIndexData = lhs_primitive;
 
     result_type.literal = lhs_primitive.literal & rhs_primitive.literal;
 
@@ -1144,7 +1175,7 @@ pub fn coerceType(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
         result_type.scalar_type = @enumFromInt(lhs_scalar_type_int | rhs_scalar_type_int);
     }
 
-    return @enumFromInt(@as(u32, @bitCast(result_type)));
+    return @enumFromInt(@as(u64, @bitCast(result_type)));
 }
 
 pub fn typeName(self: Sema, ast: Ast, type_index: TypeIndex) []const u8 {
@@ -1161,195 +1192,327 @@ pub fn typeName(self: Sema, ast: Ast, type_index: TypeIndex) []const u8 {
     }
 }
 
-pub const TypeIndex = enum(u32) {
+pub const TypeIndex = enum(u64) {
     ///Used for tagging erroring types such that we don't contaminate future error messages with bad error checking
     null = 0,
     void,
 
-    uint = @bitCast(PrimitiveNumericType{
+    uint = @bitCast(TypeIndexData{
         .sign = 0,
-        .component_count = 0,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 0,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .integer,
     }),
-    int = @bitCast(PrimitiveNumericType{
+    int = @bitCast(TypeIndexData{
         .sign = 1,
-        .component_count = 0,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 0,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .integer,
     }),
-    float = @bitCast(PrimitiveNumericType{
+    float = @bitCast(TypeIndexData{
         .sign = 0,
-        .component_count = 0,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 0,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .float,
     }),
-    double = @bitCast(PrimitiveNumericType{
+    double = @bitCast(TypeIndexData{
         .sign = 0,
-        .component_count = 0,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 0,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .double,
     }),
-    bool = @bitCast(PrimitiveNumericType{
+    bool = @bitCast(TypeIndexData{
         .sign = 0,
-        .component_count = 0,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 0,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .bool,
     }),
 
-    uvec2 = @bitCast(PrimitiveNumericType{
+    uvec2 = @bitCast(TypeIndexData{
         .sign = 0,
-        .component_count = 1,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 1,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .integer,
     }),
-    uvec3 = @bitCast(PrimitiveNumericType{
+    uvec3 = @bitCast(TypeIndexData{
         .sign = 0,
-        .component_count = 2,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 2,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .integer,
     }),
-    uvec4 = @bitCast(PrimitiveNumericType{
+    uvec4 = @bitCast(TypeIndexData{
         .sign = 0,
-        .component_count = 3,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 3,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .integer,
     }),
 
-    ivec2 = @bitCast(PrimitiveNumericType{
+    ivec2 = @bitCast(TypeIndexData{
         .sign = 1,
-        .component_count = 1,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 1,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .integer,
     }),
-    ivec3 = @bitCast(PrimitiveNumericType{
+    ivec3 = @bitCast(TypeIndexData{
         .sign = 1,
-        .component_count = 2,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 2,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .integer,
     }),
-    ivec4 = @bitCast(PrimitiveNumericType{
+    ivec4 = @bitCast(TypeIndexData{
         .sign = 1,
-        .component_count = 3,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 3,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .integer,
     }),
 
-    bvec2 = @bitCast(PrimitiveNumericType{
+    bvec2 = @bitCast(TypeIndexData{
         .sign = 0,
-        .component_count = 1,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 1,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .bool,
     }),
-    bvec3 = @bitCast(PrimitiveNumericType{
+    bvec3 = @bitCast(TypeIndexData{
         .sign = 0,
-        .component_count = 2,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 2,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .bool,
     }),
-    bvec4 = @bitCast(PrimitiveNumericType{
+    bvec4 = @bitCast(TypeIndexData{
         .sign = 0,
-        .component_count = 3,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 3,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .bool,
     }),
 
-    vec2 = @bitCast(PrimitiveNumericType{
+    vec2 = @bitCast(TypeIndexData{
         .sign = 0,
-        .component_count = 1,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 1,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .float,
     }),
-    vec3 = @bitCast(PrimitiveNumericType{
+    vec3 = @bitCast(TypeIndexData{
         .sign = 0,
-        .component_count = 2,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 2,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .float,
     }),
-    vec4 = @bitCast(PrimitiveNumericType{
+    vec4 = @bitCast(TypeIndexData{
         .sign = 0,
-        .component_count = 3,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 3,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .float,
     }),
 
-    dvec2 = @bitCast(PrimitiveNumericType{
+    dvec2 = @bitCast(TypeIndexData{
         .sign = 0,
-        .component_count = 1,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 1,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .double,
     }),
-    dvec3 = @bitCast(PrimitiveNumericType{
+    dvec3 = @bitCast(TypeIndexData{
         .sign = 0,
-        .component_count = 2,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 2,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .double,
     }),
-    dvec4 = @bitCast(PrimitiveNumericType{
+    dvec4 = @bitCast(TypeIndexData{
         .sign = 0,
-        .component_count = 3,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 3,
+        .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .double,
     }),
 
-    literal_uint = @bitCast(PrimitiveNumericType{
+    mat2 = @bitCast(TypeIndexData{
         .sign = 0,
-        .component_count = 0,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 1,
+        .matrix_column_count = 1,
+        .literal = 0,
+        .scalar_type = .float,
+    }),
+    mat3 = @bitCast(TypeIndexData{
+        .sign = 0,
+        .matrix_row_count = 2,
+        .matrix_column_count = 2,
+        .literal = 0,
+        .scalar_type = .float,
+    }),
+    mat4 = @bitCast(TypeIndexData{
+        .sign = 0,
+        .matrix_row_count = 3,
+        .matrix_column_count = 3,
+        .literal = 0,
+        .scalar_type = .float,
+    }),
+
+    mat2x3 = @bitCast(TypeIndexData{
+        .sign = 0,
+        .matrix_column_count = 1,
+        .matrix_row_count = 2,
+        .literal = 0,
+        .scalar_type = .float,
+    }),
+    mat2x4 = @bitCast(TypeIndexData{
+        .sign = 0,
+        .matrix_column_count = 1,
+        .matrix_row_count = 3,
+        .literal = 0,
+        .scalar_type = .float,
+    }),
+
+    mat3x2 = @bitCast(TypeIndexData{
+        .sign = 0,
+        .matrix_column_count = 2,
+        .matrix_row_count = 1,
+        .literal = 0,
+        .scalar_type = .float,
+    }),
+    mat3x4 = @bitCast(TypeIndexData{
+        .sign = 0,
+        .matrix_column_count = 2,
+        .matrix_row_count = 3,
+        .literal = 0,
+        .scalar_type = .float,
+    }),
+    mat4x2 = @bitCast(TypeIndexData{
+        .sign = 0,
+        .matrix_column_count = 3,
+        .matrix_row_count = 1,
+        .literal = 0,
+        .scalar_type = .float,
+    }),
+    mat4x3 = @bitCast(TypeIndexData{
+        .sign = 0,
+        .matrix_column_count = 3,
+        .matrix_row_count = 2,
+        .literal = 0,
+        .scalar_type = .float,
+    }),
+
+    dmat2 = @bitCast(TypeIndexData{
+        .sign = 0,
+        .matrix_row_count = 1,
+        .matrix_column_count = 1,
+        .literal = 0,
+        .scalar_type = .double,
+    }),
+    dmat3 = @bitCast(TypeIndexData{
+        .sign = 0,
+        .matrix_row_count = 2,
+        .matrix_column_count = 2,
+        .literal = 0,
+        .scalar_type = .double,
+    }),
+    dmat4 = @bitCast(TypeIndexData{
+        .sign = 0,
+        .matrix_row_count = 3,
+        .matrix_column_count = 3,
+        .literal = 0,
+        .scalar_type = .double,
+    }),
+
+    dmat2x3 = @bitCast(TypeIndexData{
+        .sign = 0,
+        .matrix_column_count = 1,
+        .matrix_row_count = 2,
+        .literal = 0,
+        .scalar_type = .double,
+    }),
+    dmat3x4 = @bitCast(TypeIndexData{
+        .sign = 0,
+        .matrix_column_count = 2,
+        .matrix_row_count = 3,
+        .literal = 0,
+        .scalar_type = .double,
+    }),
+    dmat2x4 = @bitCast(TypeIndexData{
+        .sign = 0,
+        .matrix_column_count = 1,
+        .matrix_row_count = 3,
+        .literal = 0,
+        .scalar_type = .double,
+    }),
+    dmat4x3 = @bitCast(TypeIndexData{
+        .sign = 0,
+        .matrix_column_count = 3,
+        .matrix_row_count = 2,
+        .literal = 0,
+        .scalar_type = .double,
+    }),
+
+    dmat3x2 = @bitCast(TypeIndexData{
+        .sign = 0,
+        .matrix_column_count = 2,
+        .matrix_row_count = 1,
+        .literal = 0,
+        .scalar_type = .double,
+    }),
+    dmat4x2 = @bitCast(TypeIndexData{
+        .sign = 0,
+        .matrix_column_count = 3,
+        .matrix_row_count = 1,
+        .literal = 0,
+        .scalar_type = .double,
+    }),
+
+    literal_uint = @bitCast(TypeIndexData{
+        .sign = 0,
+        .matrix_row_count = 0,
+        .matrix_column_count = 0,
         .literal = 1,
         .scalar_type = .integer,
     }),
-    literal_int = @bitCast(PrimitiveNumericType{
+    literal_int = @bitCast(TypeIndexData{
         .sign = 1,
-        .component_count = 0,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 0,
+        .matrix_column_count = 0,
         .literal = 1,
         .scalar_type = .integer,
     }),
-    literal_float = @bitCast(PrimitiveNumericType{
+    literal_float = @bitCast(TypeIndexData{
         .sign = 0,
-        .component_count = 0,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 0,
+        .matrix_column_count = 0,
         .literal = 1,
         .scalar_type = .float,
     }),
-    literal_bool = @bitCast(PrimitiveNumericType{
+    literal_bool = @bitCast(TypeIndexData{
         .sign = 0,
-        .component_count = 0,
-        .linear_algebra_type = .vector,
+        .matrix_row_count = 0,
+        .matrix_column_count = 0,
         .literal = 1,
         .scalar_type = .bool,
     }),
 
     _,
 
-    pub const array_index_begin: u32 = @as(u32, @bitCast(
-        PrimitiveNumericType{
+    pub const array_index_begin: u64 = @as(u64, @bitCast(
+        TypeIndexData{
             .literal = 1,
             .sign = 1,
             .scalar_type = @enumFromInt(3),
-            .linear_algebra_type = @enumFromInt(1),
-            .component_count = std.math.maxInt(u4),
+            .matrix_row_count = 3,
+            .matrix_column_count = 3,
         },
     )) + 1;
 
@@ -1389,7 +1552,7 @@ pub const TypeIndex = enum(u32) {
                     return false;
                 }
 
-                const primitive_type: PrimitiveNumericType = @bitCast(@intFromEnum(self));
+                const primitive_type: TypeIndexData = @bitCast(@intFromEnum(self));
 
                 if (primitive_type.null_or_void != 0b11 or
                     primitive_type.scalar_type == .bool)
@@ -1409,7 +1572,7 @@ pub const TypeIndex = enum(u32) {
                     return false;
                 }
 
-                const primitive_type: PrimitiveNumericType = @bitCast(@intFromEnum(self));
+                const primitive_type: TypeIndexData = @bitCast(@intFromEnum(self));
 
                 if (primitive_type.null_or_void != 0b11 or
                     primitive_type.scalar_type != .integer)
@@ -1432,27 +1595,25 @@ pub const TypeIndex = enum(u32) {
         }
     }
 
-    pub const PrimitiveNumericType = packed struct(u32) {
+    pub const TypeIndexData = packed struct(u64) {
+        //If this is zero, the type is not an array
+        array_length: u32 = 0,
         //Used to represent null and void
         null_or_void: u2 = 0b11,
         literal: u1,
         sign: u1,
         scalar_type: ScalarType,
-        linear_algebra_type: LinearAlgebraType,
-        ///For vectors and matricies
-        component_count: u4,
-        padding1: u21 = 0,
+        ///Used to reprsent vector lengths
+        matrix_row_count: u2,
+        matrix_column_count: u2,
+        //Index into the type array - 1
+        aggregate_index: u22 = 0,
 
         pub const ScalarType = enum(u2) {
             integer = 0b00,
             bool = 0b01,
             float = 0b10,
             double = 0b11,
-        };
-
-        pub const LinearAlgebraType = enum(u1) {
-            vector,
-            matrix,
         };
     };
 };
