@@ -5,6 +5,14 @@
 
 #define NUM 0
 
+vec2 sussyBakka(vec2 c) {
+    // return sus(c * 3) + sus(1) + sus(3.2);
+
+    dvec2 w = dvec2(1, 2) + vec2();
+
+    return w + c;
+}
+
 // #if NUM
 // #    include "simple.vert.glsl"
 // #    error Six is not zero!
@@ -79,21 +87,18 @@ f32 forward_decl(uint x, uint y, uint z) {
 }
 #endif
 
-f32 forward_decl(uint x, uint y);
+u32 forward_decl(uint x, uint y);
 
-f32 forward_decl(uint x, uint y) {
-    return 2;
+u32 forward_decl(uint x, uint y) {
+    return -x;
 }
 
-f32 forward_decl(uint x, uint y) {
-    return 2;
-}
-
-f32 forward_decl(uint x, uint y, uint z, uint w) {
+u32 forward_decl(uint x, uint y, uint z, uint w) {
     return x + y + z + (w + true);
 }
 
 struct Light {
+    vec2 pos;
     f32 pos_x;
     f32 pos_y;
 };
@@ -112,7 +117,7 @@ Light sussy(f32 c) {
     } else if (true) {
         f += 5;
         if (f < 0) {
-            f *= 3;
+            f *= -c + 3;
         }
     }
 
@@ -126,6 +131,16 @@ void main() {}
 
 Light sus(f32 c) {
     // f32 c = fmadd(2, 3, 3);
+
+    Light light = Light();
+    // light.pos_x = light.pos_x << 3.3;
+
+    // (light).pos = vec3(1, 2, 3);
+    // light.pos_x += true + light.pos_x;
+
+    f32 x = light.pos_x;
+
+    x + 3 = 0;
 
     // main f = 0;
 
@@ -148,6 +163,8 @@ Light sus(f32 c) {
 
         is_bum += x;
 
+        is_bum <<= 3;
+
         int v = 0;
 
         int w = 0;
@@ -164,6 +181,13 @@ Light sus(f32 c) {
 }
 #endif
 
-f32 sussyBakka(f32 c) {
-    return sus(c * 3) + sus(1) + sus(3.2);
+u32 light_compute(Light light) {
+    return light.pos_x + light.pos_y * light.pos;
+}
+
+uint hash1(uint n)
+{
+    // hash by Hugo Elias
+    n = (n << 13) ^ n;
+    return n * (n * n * 15731 + 789221) + 1376312589;
 }

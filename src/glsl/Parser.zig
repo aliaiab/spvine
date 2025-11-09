@@ -77,12 +77,27 @@ pub fn parse(self: *Parser) !void {
 
                     try root_nodes.append(self.allocator, struct_def);
                 },
-                .keyword_void,
-                .keyword_double,
                 .keyword_float,
-                .keyword_int,
+                .keyword_double,
                 .keyword_uint,
+                .keyword_int,
                 .keyword_bool,
+                .keyword_vec2,
+                .keyword_vec3,
+                .keyword_vec4,
+                .keyword_ivec2,
+                .keyword_ivec3,
+                .keyword_ivec4,
+                .keyword_uvec2,
+                .keyword_uvec3,
+                .keyword_uvec4,
+                .keyword_bvec2,
+                .keyword_bvec3,
+                .keyword_bvec4,
+                .keyword_dvec2,
+                .keyword_dvec3,
+                .keyword_dvec4,
+                .keyword_void,
                 .identifier,
                 => {
                     const proc = try self.parseProcedure();
@@ -275,13 +290,42 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
 
             return node;
         },
+        .left_paren => {
+            return self.parseExpression(.{});
+        },
         .keyword_const,
         .keyword_float,
         .keyword_uint,
         .keyword_int,
         .keyword_bool,
+        .keyword_vec2,
+        .keyword_vec3,
+        .keyword_vec4,
+        .keyword_ivec2,
+        .keyword_ivec3,
+        .keyword_ivec4,
+        .keyword_uvec2,
+        .keyword_uvec3,
+        .keyword_uvec4,
+        .keyword_bvec2,
+        .keyword_bvec3,
+        .keyword_bvec4,
+        .keyword_dvec2,
+        .keyword_dvec3,
+        .keyword_dvec4,
         .keyword_void,
-        => {
+        .identifier,
+        => |token_tag| {
+            if (token_tag == .identifier) {
+                if (self.lookAheadTokenTag(1)) |next_token| {
+                    if (next_token != .identifier) {
+                        defer _ = self.eatToken(.semicolon);
+
+                        return self.parseExpression(.{});
+                    }
+                }
+            }
+
             var node = try self.reserveNode(.statement_var_init);
             errdefer self.unreserveNode(node);
 
@@ -311,7 +355,6 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
 
             return node;
         },
-        .identifier,
         .literal_number,
         => {
             defer _ = self.eatToken(.semicolon);
@@ -403,20 +446,28 @@ pub fn parseExpression(
         const binary = struct {
             pub inline fn getPrecedence(comptime node_tag: Ast.Node.Tag) i32 {
                 return switch (node_tag) {
+                    .expression_binary_field_access,
+                    => 10,
+                    .expression_unary_minus,
+                    => 9,
                     .expression_binary_mul,
                     .expression_binary_div,
-                    => 6,
+                    => 8,
                     .expression_binary_add,
                     .expression_binary_sub,
-                    => 5,
-                    .expression_binary_eql,
-                    .expression_binary_neql,
-                    => 4,
+                    => 7,
+                    .expression_binary_bitwise_shift_left,
+                    .expression_binary_bitwise_shift_right,
+                    => 6,
                     .expression_binary_lt,
                     .expression_binary_gt,
                     .expression_binary_leql,
                     .expression_binary_geql,
-                    => 3,
+                    => 5,
+                    .expression_binary_eql,
+                    .expression_binary_neql,
+                    => 4,
+                    .expression_binary_bitwise_xor => 3,
                     .expression_binary_assign,
                     .expression_binary_assign_add,
                     .expression_binary_assign_sub,
@@ -446,6 +497,13 @@ pub fn parseExpression(
                     .less_than_equals => .expression_binary_leql,
                     .greater_than_equals => .expression_binary_geql,
                     .comma => .expression_binary_comma,
+                    .unary_minus => .expression_unary_minus,
+                    .period => .expression_binary_field_access,
+                    .caret => .expression_binary_bitwise_xor,
+                    .double_left_angled_bracket => .expression_binary_bitwise_shift_left,
+                    .double_right_angled_bracket => .expression_binary_bitwise_shift_right,
+                    .double_left_angled_bracket_equals => .expression_binary_assign_bitwise_shift_left,
+                    .double_right_angled_bracket_equals => .expression_binary_assign_bitwise_shift_right,
                     else => null,
                 };
             }
@@ -502,11 +560,26 @@ pub fn parseExpression(
                     .token = identifier,
                 });
             },
-            .keyword_uint,
             .keyword_int,
+            .keyword_uint,
             .keyword_float,
             .keyword_double,
             .keyword_bool,
+            .keyword_vec2,
+            .keyword_vec3,
+            .keyword_vec4,
+            .keyword_ivec2,
+            .keyword_ivec3,
+            .keyword_ivec4,
+            .keyword_uvec2,
+            .keyword_uvec3,
+            .keyword_uvec4,
+            .keyword_bvec2,
+            .keyword_bvec3,
+            .keyword_bvec4,
+            .keyword_dvec2,
+            .keyword_dvec3,
+            .keyword_dvec4,
             => {
                 if (lhs != Ast.NodeIndex.nil and !binary.isBinaryExpression(self.previousTokenTag())) {
                     return self.unexpectedToken();
@@ -598,15 +671,27 @@ pub fn parseExpression(
 
 pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
     switch (self.token_tags[self.token_index]) {
-        .keyword_void,
-        .keyword_int,
-        .keyword_uint,
         .keyword_float,
         .keyword_double,
+        .keyword_uint,
+        .keyword_int,
+        .keyword_bool,
         .keyword_vec2,
         .keyword_vec3,
         .keyword_vec4,
-        .keyword_bool,
+        .keyword_ivec2,
+        .keyword_ivec3,
+        .keyword_ivec4,
+        .keyword_uvec2,
+        .keyword_uvec3,
+        .keyword_uvec4,
+        .keyword_bvec2,
+        .keyword_bvec3,
+        .keyword_bvec4,
+        .keyword_dvec2,
+        .keyword_dvec3,
+        .keyword_dvec4,
+        .keyword_void,
         .identifier,
         => {
             var node = try self.reserveNode(.type_expr);

@@ -121,6 +121,7 @@ pub fn analyse(sema: *Sema, ast: Ast, allocator: std.mem.Allocator) !struct {
                         error.ModifiedConstant,
                         error.ArgumentCountMismatch,
                         error.NoMatchingOverload,
+                        error.CannotPeformFieldAccess,
                         => {},
                         else => return e,
                     }
@@ -414,6 +415,8 @@ pub fn analyseStatement(
         .expression_binary_assign_sub,
         .expression_binary_assign_mul,
         .expression_binary_assign_div,
+        .expression_binary_assign_bitwise_shift_left,
+        .expression_binary_assign_bitwise_shift_right,
         => {
             _ = try self.resolveTypeFromExpression(ast, statement_node);
         },
@@ -690,8 +693,30 @@ pub fn resolveTypeFromIdentifier(self: *Sema, ast: Ast, type_expr_token: Ast.Tok
         .keyword_uint => .uint,
         .keyword_int => .int,
         .keyword_float => .float,
+        .keyword_double => .double,
         .keyword_bool => .bool,
         .keyword_void => .void,
+
+        .keyword_vec2 => .vec2,
+        .keyword_vec3 => .vec3,
+        .keyword_vec4 => .vec4,
+
+        .keyword_uvec2 => .uvec2,
+        .keyword_uvec3 => .uvec3,
+        .keyword_uvec4 => .uvec4,
+
+        .keyword_ivec2 => .ivec2,
+        .keyword_ivec3 => .ivec3,
+        .keyword_ivec4 => .ivec4,
+
+        .keyword_bvec2 => .bvec2,
+        .keyword_bvec3 => .bvec3,
+        .keyword_bvec4 => .bvec4,
+
+        .keyword_dvec2 => .dvec2,
+        .keyword_dvec3 => .dvec3,
+        .keyword_dvec4 => .dvec4,
+
         .identifier => {
             const type_index = self.type_map.get(ast.tokenString(type_expr_token)) orelse {
                 try self.errors.append(self.gpa, .{
@@ -715,8 +740,29 @@ pub fn resolveTypeFromIdentifierNoError(self: *Sema, ast: Ast, type_expr_token: 
         .keyword_uint => .uint,
         .keyword_int => .int,
         .keyword_float => .float,
+        .keyword_double => .double,
         .keyword_bool => .bool,
         .keyword_void => .void,
+
+        .keyword_vec2 => .vec2,
+        .keyword_vec3 => .vec3,
+        .keyword_vec4 => .vec4,
+
+        .keyword_uvec2 => .uvec2,
+        .keyword_uvec3 => .uvec3,
+        .keyword_uvec4 => .uvec4,
+
+        .keyword_ivec2 => .ivec2,
+        .keyword_ivec3 => .ivec3,
+        .keyword_ivec4 => .ivec4,
+
+        .keyword_bvec2 => .bvec2,
+        .keyword_bvec3 => .bvec3,
+        .keyword_bvec4 => .bvec4,
+
+        .keyword_dvec2 => .dvec2,
+        .keyword_dvec3 => .dvec3,
+        .keyword_dvec4 => .dvec4,
         .identifier => {
             const type_index = self.type_map.get(ast.tokenString(type_expr_token)) orelse {
                 return null;
@@ -771,7 +817,7 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                 .null => {
                     try self.errors.append(self.gpa, .{
                         .tag = .type_mismatch,
-                        .anchor = .{ .token = var_init.identifier },
+                        .anchor = .{ .node = var_init.expression },
                         .data = .{
                             .type_mismatch = .{
                                 .lhs_type = type_index,
@@ -838,6 +884,9 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
         .expression_binary_sub,
         .expression_binary_mul,
         .expression_binary_div,
+        .expression_binary_bitwise_xor,
+        .expression_binary_bitwise_shift_left,
+        .expression_binary_bitwise_shift_right,
         => {
             const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_add);
 
@@ -884,22 +933,24 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
         .expression_binary_assign_sub,
         .expression_binary_assign_mul,
         .expression_binary_assign_div,
+        .expression_binary_assign_bitwise_shift_left,
+        .expression_binary_assign_bitwise_shift_right,
         => {
             const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_add);
+
+            const lhs_type = try self.resolveTypeFromExpression(ast, binary_expr.left);
+            const rhs_type = try self.resolveTypeFromExpression(ast, binary_expr.right);
 
             const assignable = try self.isExpressionAssignable(ast, binary_expr.left);
 
             if (!assignable) {
                 try self.errors.append(self.gpa, .{
                     .tag = .modified_const,
-                    .anchor = .{ .token = binary_expr.op_token },
+                    .anchor = .{ .node = binary_expr.left },
                 });
 
                 return error.ModifiedConstant;
             }
-
-            const lhs_type = try self.resolveTypeFromExpression(ast, binary_expr.left);
-            const rhs_type = try self.resolveTypeFromExpression(ast, binary_expr.right);
 
             const resultant_type = switch (coerceTypeAssign(lhs_type, rhs_type)) {
                 .null => {
@@ -936,6 +987,28 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
 
             return resultant_type;
         },
+        .expression_unary_minus => {
+            const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_unary_minus);
+
+            const rhs_type = try self.resolveTypeFromExpression(ast, binary_expr.right);
+
+            if (!rhs_type.isOperatorDefined(expression.tag)) {
+                try self.errors.append(self.gpa, .{
+                    .tag = .type_incompatibility,
+                    .anchor = .{ .node = expression },
+                    .data = .{
+                        .type_incompatibility = .{
+                            .lhs_type = rhs_type,
+                            .rhs_type = rhs_type,
+                        },
+                    },
+                });
+
+                return error.TypeIncompatibilty;
+            }
+
+            return rhs_type;
+        },
         .expression_identifier => {
             const identifier: Ast.Node.Identifier = ast.dataFromNode(expression, .expression_identifier);
 
@@ -962,6 +1035,32 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
 
             return procedure.general_data.return_type;
         },
+        .expression_binary_field_access => {
+            const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_field_access);
+
+            const lhs_type = try self.resolveTypeFromExpression(ast, binary_expr.left);
+            const rhs_identifier: Ast.Node.Identifier = ast.dataFromNode(binary_expr.right, .expression_identifier);
+
+            //TODO: support vectors
+            if (lhs_type.toArrayIndex() == null) {
+                try self.errors.append(self.gpa, .{
+                    .anchor = .{ .node = expression },
+                    .tag = .cannot_perform_field_access,
+                });
+
+                return error.CannotPeformFieldAccess;
+            }
+
+            const type_data = self.types.items[lhs_type.toArrayIndex().?];
+
+            const maybe_field = type_data.@"struct".fields.get(ast.tokenString(rhs_identifier.token));
+
+            if (maybe_field) |field| {
+                return field.type_index;
+            }
+
+            @panic("sus");
+        },
         else => @panic(@tagName(expression.tag)),
     }
 }
@@ -976,6 +1075,11 @@ pub fn isExpressionAssignable(self: *Sema, ast: Ast, expression: Ast.NodeIndex) 
 
             return identifier.qualifier != .constant;
         },
+        .expression_binary_field_access => {
+            const field_access: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_field_access);
+
+            return self.isExpressionAssignable(ast, field_access.left);
+        },
         else => return false,
     }
 }
@@ -986,6 +1090,10 @@ pub fn coerceTypeAssign(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
     const type_primitive: TypeIndex.PrimitiveNumericType = @bitCast(@intFromEnum(result_type));
 
     if (lhs_primitive.scalar_type == .integer and type_primitive.scalar_type != .integer) {
+        return .null;
+    }
+
+    if (lhs_primitive.scalar_type == .float and type_primitive.scalar_type == .double) {
         return .null;
     }
 
@@ -1079,12 +1187,129 @@ pub const TypeIndex = enum(u32) {
         .literal = 0,
         .scalar_type = .float,
     }),
+    double = @bitCast(PrimitiveNumericType{
+        .sign = 0,
+        .component_count = 0,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .double,
+    }),
     bool = @bitCast(PrimitiveNumericType{
         .sign = 0,
         .component_count = 0,
         .linear_algebra_type = .vector,
         .literal = 0,
         .scalar_type = .bool,
+    }),
+
+    uvec2 = @bitCast(PrimitiveNumericType{
+        .sign = 0,
+        .component_count = 1,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .integer,
+    }),
+    uvec3 = @bitCast(PrimitiveNumericType{
+        .sign = 0,
+        .component_count = 2,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .integer,
+    }),
+    uvec4 = @bitCast(PrimitiveNumericType{
+        .sign = 0,
+        .component_count = 3,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .integer,
+    }),
+
+    ivec2 = @bitCast(PrimitiveNumericType{
+        .sign = 1,
+        .component_count = 1,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .integer,
+    }),
+    ivec3 = @bitCast(PrimitiveNumericType{
+        .sign = 1,
+        .component_count = 2,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .integer,
+    }),
+    ivec4 = @bitCast(PrimitiveNumericType{
+        .sign = 1,
+        .component_count = 3,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .integer,
+    }),
+
+    bvec2 = @bitCast(PrimitiveNumericType{
+        .sign = 0,
+        .component_count = 1,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .bool,
+    }),
+    bvec3 = @bitCast(PrimitiveNumericType{
+        .sign = 0,
+        .component_count = 2,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .bool,
+    }),
+    bvec4 = @bitCast(PrimitiveNumericType{
+        .sign = 0,
+        .component_count = 3,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .bool,
+    }),
+
+    vec2 = @bitCast(PrimitiveNumericType{
+        .sign = 0,
+        .component_count = 1,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .float,
+    }),
+    vec3 = @bitCast(PrimitiveNumericType{
+        .sign = 0,
+        .component_count = 2,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .float,
+    }),
+    vec4 = @bitCast(PrimitiveNumericType{
+        .sign = 0,
+        .component_count = 3,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .float,
+    }),
+
+    dvec2 = @bitCast(PrimitiveNumericType{
+        .sign = 0,
+        .component_count = 1,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .double,
+    }),
+    dvec3 = @bitCast(PrimitiveNumericType{
+        .sign = 0,
+        .component_count = 2,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .double,
+    }),
+    dvec4 = @bitCast(PrimitiveNumericType{
+        .sign = 0,
+        .component_count = 3,
+        .linear_algebra_type = .vector,
+        .literal = 0,
+        .scalar_type = .double,
     }),
 
     literal_uint = @bitCast(PrimitiveNumericType{
@@ -1124,7 +1349,7 @@ pub const TypeIndex = enum(u32) {
             .sign = 1,
             .scalar_type = @enumFromInt(3),
             .linear_algebra_type = @enumFromInt(1),
-            .component_count = 1,
+            .component_count = std.math.maxInt(u4),
         },
     )) + 1;
 
@@ -1158,6 +1383,7 @@ pub const TypeIndex = enum(u32) {
             .expression_binary_gt,
             .expression_binary_leql,
             .expression_binary_geql,
+            .expression_unary_minus,
             => {
                 if (self.toArrayIndex() != null) {
                     return false;
@@ -1167,6 +1393,26 @@ pub const TypeIndex = enum(u32) {
 
                 if (primitive_type.null_or_void != 0b11 or
                     primitive_type.scalar_type == .bool)
+                {
+                    return false;
+                }
+
+                return true;
+            },
+            .expression_binary_bitwise_xor,
+            .expression_binary_bitwise_shift_left,
+            .expression_binary_bitwise_shift_right,
+            .expression_binary_assign_bitwise_shift_left,
+            .expression_binary_assign_bitwise_shift_right,
+            => {
+                if (self.toArrayIndex() != null) {
+                    return false;
+                }
+
+                const primitive_type: PrimitiveNumericType = @bitCast(@intFromEnum(self));
+
+                if (primitive_type.null_or_void != 0b11 or
+                    primitive_type.scalar_type != .integer)
                 {
                     return false;
                 }
@@ -1194,8 +1440,8 @@ pub const TypeIndex = enum(u32) {
         scalar_type: ScalarType,
         linear_algebra_type: LinearAlgebraType,
         ///For vectors and matricies
-        component_count: u2,
-        padding1: u23 = 0,
+        component_count: u4,
+        padding1: u21 = 0,
 
         pub const ScalarType = enum(u2) {
             integer = 0b00,

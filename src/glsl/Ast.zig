@@ -144,6 +144,16 @@ fn nodeStringRecursive(
         .expression_binary_mul,
         .expression_binary_comma,
         .expression_binary_proc_call,
+        .expression_binary_field_access,
+        .expression_binary_bitwise_xor,
+        .expression_binary_bitwise_shift_left,
+        .expression_binary_bitwise_shift_right,
+        .expression_binary_assign_add,
+        .expression_binary_assign_mul,
+        .expression_binary_assign_div,
+        .expression_binary_assign_sub,
+        .expression_binary_assign_bitwise_shift_left,
+        .expression_binary_assign_bitwise_shift_right,
         => {
             const binary_expr: Node.BinaryExpression = self.dataFromNode(node, .expression_binary_add);
 
@@ -168,6 +178,18 @@ fn nodeStringRecursive(
         .expression_identifier => {
             const identifier: Node.Identifier = self.dataFromNode(node, .expression_identifier);
             maybe_token = identifier.token;
+        },
+        .expression_unary_minus => {
+            const binary_expr: Node.BinaryExpression = self.dataFromNode(node, .expression_binary_add);
+
+            maybe_token = binary_expr.op_token;
+
+            const rhs_range = self.nodeStringRecursive(binary_expr.right, parent_range);
+
+            return .{
+                .start = rhs_range.start -| 1,
+                .end = rhs_range.end,
+            };
         },
         else => {
             @panic(@tagName(node.tag));
@@ -241,6 +263,7 @@ pub const Error = struct {
         argument_count_mismatch,
         argument_count_out_of_range,
         no_matching_overload,
+        cannot_perform_field_access,
     };
 };
 
@@ -264,7 +287,7 @@ pub const NodeIndex = packed struct(u32) {
 };
 
 pub const Node = struct {
-    pub const Tag = enum(u5) {
+    pub const Tag = enum(u6) {
         type_expr,
         procedure,
         struct_definition,
@@ -283,10 +306,15 @@ pub const Node = struct {
         expression_binary_assign_sub,
         expression_binary_assign_mul,
         expression_binary_assign_div,
+        expression_binary_assign_bitwise_shift_left,
+        expression_binary_assign_bitwise_shift_right,
         expression_binary_add,
         expression_binary_sub,
         expression_binary_mul,
         expression_binary_div,
+        expression_binary_bitwise_xor,
+        expression_binary_bitwise_shift_left,
+        expression_binary_bitwise_shift_right,
         ///Less than
         expression_binary_lt,
         ///Greater than
@@ -299,6 +327,9 @@ pub const Node = struct {
         expression_binary_geql,
         expression_binary_proc_call,
         expression_binary_comma,
+        expression_binary_field_access,
+
+        expression_unary_minus,
     };
 
     pub const Data = union(Tag) {
@@ -320,10 +351,15 @@ pub const Node = struct {
         expression_binary_assign_sub: BinaryExpression,
         expression_binary_assign_mul: BinaryExpression,
         expression_binary_assign_div: BinaryExpression,
+        expression_binary_assign_bitwise_shift_left: BinaryExpression,
+        expression_binary_assign_bitwise_shift_right: BinaryExpression,
         expression_binary_add: BinaryExpression,
         expression_binary_sub: BinaryExpression,
         expression_binary_mul: BinaryExpression,
         expression_binary_div: BinaryExpression,
+        expression_binary_bitwise_xor: BinaryExpression,
+        expression_binary_bitwise_shift_left: BinaryExpression,
+        expression_binary_bitwise_shift_right: BinaryExpression,
         ///Less than
         expression_binary_lt: BinaryExpression,
         ///Greater than
@@ -336,6 +372,8 @@ pub const Node = struct {
         expression_binary_geql: BinaryExpression,
         expression_binary_proc_call: BinaryExpression,
         expression_binary_comma: BinaryExpression,
+        expression_binary_field_access: BinaryExpression,
+        expression_unary_minus: BinaryExpression,
     };
 
     pub const StructDefinition = struct {
@@ -532,10 +570,6 @@ pub const NodeHeap = struct {
         const chunk: [*]u8 = chunks.at(chunk_index);
 
         const bytes = (chunk + chunk_offset)[0..@sizeOf(Payload)];
-
-        if (!std.mem.isAligned(@intFromPtr(bytes), @alignOf(Payload))) {
-            std.log.info("expected alignment {}, found address x{x}", .{ @alignOf(Payload), @intFromPtr(bytes) });
-        }
 
         return @alignCast(std.mem.bytesAsValue(Payload, bytes));
     }
