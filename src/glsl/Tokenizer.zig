@@ -133,6 +133,11 @@ pub fn next(self: *Tokenizer) ?Token {
                     self.index += 1;
                     break;
                 },
+                ':' => {
+                    token.tag = .colon;
+                    self.index += 1;
+                    break;
+                },
                 '.' => {
                     token.tag = .period;
                     self.index += 1;
@@ -497,13 +502,60 @@ pub fn next(self: *Tokenizer) ?Token {
     return token;
 }
 
+///Skips over tokens until a new line is reached, returning the range of text skipped
+pub fn advanceLineRange(self: *Tokenizer) SourceRange {
+    if (self.index >= self.source.len) {
+        return .{ .start = @intCast(self.index), .end = @intCast(self.source.len) };
+    }
+
+    const end_offset = std.mem.indexOf(u8, self.source[self.index..], "\n") orelse self.source.len - self.index - 1;
+
+    const line_end = self.index + end_offset + 1;
+
+    const start = self.index;
+
+    self.index = @intCast(line_end);
+
+    return .{
+        .start = start,
+        .end = self.index,
+    };
+}
+
+///Skips over tokens until a new directive is reached, returning the range of text skipped (not including the new directive)
+pub fn advanceUntilNextDirective(self: *Tokenizer) SourceRange {
+    if (self.index >= self.source.len) {
+        return .{ .start = @intCast(self.index), .end = @intCast(self.source.len) };
+    }
+
+    const end_offset = std.mem.indexOf(u8, self.source[self.index..], "#") orelse self.source.len - self.index - 1;
+
+    const line_end = self.index + end_offset + 1;
+
+    const start = self.index;
+
+    self.index = @intCast(line_end);
+
+    return .{
+        .start = start,
+        .end = self.index,
+    };
+}
+
+pub const SourceRange = struct {
+    start: u32,
+    end: u32,
+};
+
 pub const Token = struct {
     start: u32,
     end: u32,
     tag: Tag,
 
     pub const Tag = enum(u8) {
+        end_of_file,
         invalid,
+
         reserved_keyword,
 
         directive_define,
@@ -625,6 +677,7 @@ pub const Token = struct {
         left_paren,
         right_paren,
         semicolon,
+        colon,
         comma,
         period,
         less_than_equals,
@@ -654,6 +707,7 @@ pub const Token = struct {
         //TODO: potentially should be removed as token strings can now have non-canonical strings (with line continuation)
         pub fn lexeme(tag: Tag) ?[]const u8 {
             return switch (tag) {
+                .end_of_file,
                 .invalid,
                 .identifier,
                 .literal_number,
@@ -771,6 +825,7 @@ pub const Token = struct {
                 .left_paren => "(",
                 .right_paren => ")",
                 .semicolon => ";",
+                .colon => ":",
                 .comma => ",",
                 .period => ".",
                 .less_than_equals => "<=",
