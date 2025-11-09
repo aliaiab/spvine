@@ -250,6 +250,15 @@ pub fn printErrors(
                     color_end,
                 }) catch {};
             },
+            .cannot_perform_field_access => {
+                writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " cannot perform field access\n" ++ color_end, .{
+                    file_path,
+                    loc.line,
+                    loc.column,
+                    terminal_red,
+                    color_end,
+                }) catch {};
+            },
         }
 
         var tokenizer = Tokenizer.init(ast.source[0 .. loc.line_end + 1]);
