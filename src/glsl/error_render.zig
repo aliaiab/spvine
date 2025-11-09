@@ -18,19 +18,24 @@ pub fn printErrors(
 
         switch (error_value.anchor) {
             .token => |error_token| {
-                const previous_token: Ast.TokenIndex = @enumFromInt(@intFromEnum(error_token) -| 1);
+                // const previous_token: Ast.TokenIndex = @enumFromInt(@intFromEnum(error_token) -| 1);
 
-                is_same_line = ast.tokenLocation(previous_token).line == ast.tokenLocation(error_token).line;
+                // is_same_line = ast.tokenLocation(previous_token).line == ast.tokenLocation(error_token).line;
+                //TODO: walk back in the source stream until you find the previous token
+                is_same_line = true;
 
-                loc = if (is_same_line)
-                    ast.tokenLocation(error_token)
-                else
-                    ast.tokenLocation(if (error_value.tag == .expected_token) previous_token else error_token);
+                loc = ast.tokenLocation(error_token);
 
-                found_token = ast.tokens.items(.tag)[@intFromEnum(error_token)];
+                // loc = if (is_same_line)
+                // ast.tokenLocation(error_token)
+                // else
+                // ast.tokenLocation(if (error_value.tag == .expected_token) previous_token else error_token);
 
-                error_anchor_start = ast.tokens.items(.start)[@intFromEnum(error_token)];
-                error_anchor_end = ast.tokens.items(.end)[@intFromEnum(error_token)];
+                found_token = error_token.tag;
+
+                //TODO: handle multiple files
+                error_anchor_start = error_token.string_start;
+                error_anchor_end = error_token.string_start + @as(u32, error_token.string_length);
             },
             .node => |error_node| {
                 const node_string = ast.nodeStringRange(error_node);
@@ -72,7 +77,7 @@ pub fn printErrors(
                 }) catch {};
             },
             .directive_error => {
-                const error_directive_end = ast.tokens.items(.end)[@intFromEnum(error_value.anchor.token)];
+                const error_directive_end = error_value.anchor.token.string_start + error_value.anchor.token.string_length;
 
                 const error_message_to_eof = ast.source[error_directive_end..];
 
@@ -311,7 +316,7 @@ pub fn printErrors(
             "^",
         }) catch {};
 
-        for (0..cursor_length - 1) |_| {
+        for (0..cursor_length -| 1) |_| {
             writer.print("~", .{}) catch {};
         }
 
@@ -443,44 +448,52 @@ fn printAstToken(
         .identifier => {
             const string = ast.source[token.start..token.end];
 
-            if (ast.defines.get(string)) |define| {
-                const token_def_start = ast.tokens.items(.start)[define.start_token];
-                _ = token_def_start; // autofix
-                const first_token_tag = ast.tokens.items(.tag)[define.start_token];
-
-                switch (first_token_tag) {
-                    .keyword_void,
-                    .keyword_int,
-                    .keyword_uint,
-                    .keyword_float,
-                    .keyword_double,
-                    .keyword_bool,
-                    .keyword_true,
-                    .keyword_false,
-                    .keyword_vec2,
-                    .keyword_vec3,
-                    .keyword_vec4,
-                    => {
-                        writer.print(terminal_blue, .{}) catch {};
-
-                        writer.print("{s}" ++ color_end, .{
-                            ast.source[token.start..token.end],
-                        }) catch {};
-                    },
-                    else => {
-                        writer.print(terminal_white, .{}) catch {};
-
-                        writer.print("{s}" ++ color_end, .{
-                            string,
-                        }) catch {};
-                    },
-                }
-            } else {
+            if (true) {
                 writer.print(terminal_white, .{}) catch {};
 
                 writer.print("{s}" ++ color_end, .{
                     string,
                 }) catch {};
+            } else { //TODO: handle macro expansion
+                if (ast.defines.get(string)) |define| {
+                    const token_def_start = define.source_range.start;
+                    _ = token_def_start; // autofix
+                    const first_token_tag = define.start_token.tag;
+
+                    switch (first_token_tag) {
+                        .keyword_void,
+                        .keyword_int,
+                        .keyword_uint,
+                        .keyword_float,
+                        .keyword_double,
+                        .keyword_bool,
+                        .keyword_true,
+                        .keyword_false,
+                        .keyword_vec2,
+                        .keyword_vec3,
+                        .keyword_vec4,
+                        => {
+                            writer.print(terminal_blue, .{}) catch {};
+
+                            writer.print("{s}" ++ color_end, .{
+                                ast.source[token.start..token.end],
+                            }) catch {};
+                        },
+                        else => {
+                            writer.print(terminal_white, .{}) catch {};
+
+                            writer.print("{s}" ++ color_end, .{
+                                string,
+                            }) catch {};
+                        },
+                    }
+                } else {
+                    writer.print(terminal_white, .{}) catch {};
+
+                    writer.print("{s}" ++ color_end, .{
+                        string,
+                    }) catch {};
+                }
             }
         },
         else => {
