@@ -30,7 +30,7 @@ pub fn parse(
     parser.parse() catch |e| {
         switch (e) {
             error.ExpectedToken => {},
-            // error.UnexpectedToken => {},
+            error.UnexpectedToken => {},
             else => return e,
         }
     };
