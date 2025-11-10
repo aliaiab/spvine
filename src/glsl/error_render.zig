@@ -102,6 +102,24 @@ pub fn printErrors(
                     ast.tokenString(error_value.anchor.token),
                 }) catch {};
             },
+            .unexpected_endif => {
+                writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s} " ++ terminal_bold ++ "unexpected #endif" ++ "\n" ++ color_end, .{
+                    file_path,
+                    loc.line,
+                    loc.column,
+                    terminal_red,
+                    color_end,
+                }) catch {};
+            },
+            .expected_endif => {
+                writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s} " ++ terminal_bold ++ "Expected corresponding #endif" ++ "\n" ++ color_end, .{
+                    file_path,
+                    loc.line,
+                    loc.column,
+                    terminal_red,
+                    color_end,
+                }) catch {};
+            },
             .expected_token => {
                 if (is_same_line) {
                     writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " expected '{s}', found '{s}'\n" ++ color_end, .{
@@ -319,6 +337,8 @@ pub fn printErrors(
         for (0..cursor_length -| 1) |_| {
             writer.print("~", .{}) catch {};
         }
+
+        writer.print(color_end, .{}) catch {};
 
         writer.print("\n", .{}) catch {};
     }
