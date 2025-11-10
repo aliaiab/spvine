@@ -1135,6 +1135,16 @@ pub fn coerceTypeAssign(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
     return result_type;
 }
 
+pub fn coerceTypeAddOrSub(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
+    const result_type = coerceType(lhs, rhs);
+    const lhs_primitive: TypeIndex.TypeIndexData = @bitCast(@intFromEnum(lhs));
+    _ = lhs_primitive; // autofix
+    const type_primitive: TypeIndex.TypeIndexData = @bitCast(@intFromEnum(result_type));
+    _ = type_primitive; // autofix
+
+    return result_type;
+}
+
 pub fn coerceType(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
     if (lhs == rhs) {
         return lhs;

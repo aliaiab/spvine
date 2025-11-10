@@ -31,6 +31,8 @@ pub fn parse(
         switch (e) {
             error.ExpectedToken => {},
             error.UnexpectedToken => {},
+            error.UnexpectedEndif => {},
+            error.DirectiveError => {},
             else => return e,
         }
     };
@@ -120,7 +122,7 @@ fn nodeStringRecursive(
     parent_range: SourceStringRange,
 ) SourceStringRange {
     if (node == Ast.NodeIndex.nil) {
-        @panic("Node cannot be null");
+        return parent_range;
     }
 
     var maybe_token: ?TokenIndex = null;
@@ -251,6 +253,8 @@ pub const Error = struct {
         unexpected_token,
         unsupported_directive,
         directive_error,
+        unexpected_endif,
+        expected_endif,
 
         //Semantic errors
         undeclared_identifier,
@@ -264,8 +268,6 @@ pub const Error = struct {
         cannot_perform_field_access,
     };
 };
-
-pub const TokenList = std.MultiArrayList(Token);
 
 pub const TokenIndex = packed struct(u64) {
     string_start: u32,

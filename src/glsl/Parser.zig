@@ -1,6 +1,6 @@
 //! Implements the syntactic analysis stage of the frontend
 
-allocator: std.mem.Allocator,
+gpa: std.mem.Allocator,
 source: []const u8,
 tokenizer: Tokenizer,
 ///Stores a centered slice of the token stream
@@ -9,16 +9,13 @@ token_window: TokenWindow = [1]Ast.TokenIndex{.invalid} ** 3,
 defines: DefineMap = .{},
 ///This is the generation of #define we're currently on
 define_generation: u32 = 0,
+directive_if_level: u32 = 0,
+directive_if_condition: bool = false,
 tokenizer_stack: std.ArrayList(struct {
-    token_window: TokenWindow,
     //This may be able to be inferred from the token window (bar the retained state within Tokenizer)
     tokenizer: Tokenizer,
     define_generation: u32,
 }) = .{},
-node_context_stack: std.ArrayList(struct {
-    saved_token_window: TokenWindow,
-    saved_error_index: u32,
-}),
 errors: std.ArrayList(Ast.Error),
 node_heap: Ast.NodeHeap = .{},
 root_decls: []Ast.NodeIndex,
@@ -28,10 +25,9 @@ pub fn init(
     source: []const u8,
 ) Parser {
     return .{
-        .allocator = allocator,
+        .gpa = allocator,
         .source = source,
         .tokenizer = Tokenizer.init(source),
-        .node_context_stack = .{},
         .errors = .{},
         .root_decls = &.{},
     };
@@ -39,15 +35,14 @@ pub fn init(
 
 pub fn deinit(self: *Parser) void {
     defer self.* = undefined;
-    defer self.errors.deinit(self.allocator);
-    defer self.node_context_stack.deinit(self.allocator);
+    defer self.errors.deinit(self.gpa);
     // defer self.node_heap.deinit(self.allocator);
 }
 
 ///Root parse node
 pub fn parse(self: *Parser) !void {
     var root_nodes: std.ArrayList(Ast.NodeIndex) = .{};
-    defer root_nodes.deinit(self.allocator);
+    defer root_nodes.deinit(self.gpa);
 
     //Init the token window
     self.token_window[0] = .invalid;
@@ -59,7 +54,7 @@ pub fn parse(self: *Parser) !void {
             .keyword_struct => {
                 const struct_def = try self.parseStruct();
 
-                try root_nodes.append(self.allocator, struct_def);
+                try root_nodes.append(self.gpa, struct_def);
             },
             .keyword_float,
             .keyword_double,
@@ -103,15 +98,15 @@ pub fn parse(self: *Parser) !void {
             => {
                 const proc = try self.parseProcedure();
 
-                try root_nodes.append(self.allocator, proc);
+                try root_nodes.append(self.gpa, proc);
             },
             else => {
-                _ = self.nextToken();
+                _ = try self.nextToken();
             },
         }
     }
 
-    self.root_decls = try root_nodes.toOwnedSlice(self.allocator);
+    self.root_decls = try root_nodes.toOwnedSlice(self.gpa);
 }
 
 pub fn parseStruct(self: *Parser) !Ast.NodeIndex {
@@ -125,7 +120,7 @@ pub fn parseStruct(self: *Parser) !Ast.NodeIndex {
     _ = try self.expectToken(.left_brace);
 
     var field_nodes: std.ArrayList(Ast.NodeIndex) = .{};
-    defer field_nodes.deinit(self.allocator);
+    defer field_nodes.deinit(self.gpa);
 
     while (self.peekTokenTag().? != .right_brace) {
         const field_type = try self.parseTypeExpr();
@@ -139,14 +134,14 @@ pub fn parseStruct(self: *Parser) !Ast.NodeIndex {
             .type_expr = field_type,
         });
 
-        try field_nodes.append(self.allocator, struct_field_node);
+        try field_nodes.append(self.gpa, struct_field_node);
 
         _ = try self.expectToken(.semicolon);
     }
 
     try self.nodeSetData(&node_index, .struct_definition, .{
         .name = struct_name_identifier,
-        .fields = try self.node_heap.allocateDupe(self.allocator, Ast.NodeIndex, field_nodes.items),
+        .fields = try self.node_heap.allocateDupe(self.gpa, Ast.NodeIndex, field_nodes.items),
     });
 
     _ = try self.expectToken(.right_brace);
@@ -192,20 +187,20 @@ pub fn parseParamList(self: *Parser) !Ast.NodeIndex {
     errdefer self.unreserveNode(node);
 
     var param_nodes: std.ArrayList(Ast.NodeIndex) = .{};
-    defer param_nodes.deinit(self.allocator);
+    defer param_nodes.deinit(self.gpa);
 
     while (self.peekTokenTag().? != .right_paren) {
         const param = try self.parseParam();
 
-        try param_nodes.append(self.allocator, param);
+        try param_nodes.append(self.gpa, param);
 
         if (self.lookAheadTokenTag(1) != .right_paren) {
-            _ = self.eatToken(.comma);
+            _ = try self.eatToken(.comma);
         }
     }
 
     try self.nodeSetData(&node, .param_list, .{
-        .params = try self.node_heap.allocateDupe(self.allocator, Ast.NodeIndex, param_nodes.items),
+        .params = try self.node_heap.allocateDupe(self.gpa, Ast.NodeIndex, param_nodes.items),
     });
 
     return node;
@@ -215,7 +210,7 @@ pub fn parseParam(self: *Parser) !Ast.NodeIndex {
     var node = try self.reserveNode(.param_expr);
     errdefer self.unreserveNode(node);
 
-    const qualifier: Token.Tag = self.eatVariableQualifier();
+    const qualifier: Token.Tag = try self.eatVariableQualifier();
 
     const type_expr = try self.parseTypeExpr();
     const param_identifier = try self.expectToken(.identifier);
@@ -229,10 +224,10 @@ pub fn parseParam(self: *Parser) !Ast.NodeIndex {
     return node;
 }
 
-pub fn eatVariableQualifier(self: *Parser) Token.Tag {
+pub fn eatVariableQualifier(self: *Parser) !Token.Tag {
     var qualifier: Token.Tag = .keyword_in;
 
-    const first_in_qualifier = self.eatToken(.keyword_in);
+    const first_in_qualifier = try self.eatToken(.keyword_in);
 
     switch (self.peekTokenTag().?) {
         .keyword_inout,
@@ -242,13 +237,13 @@ pub fn eatVariableQualifier(self: *Parser) Token.Tag {
         => |tag| {
             qualifier = tag;
 
-            _ = self.nextToken();
+            _ = try self.nextToken();
         },
         else => {},
     }
 
     if (first_in_qualifier == null) {
-        _ = self.eatToken(.keyword_in);
+        _ = try self.eatToken(.keyword_in);
     }
 
     return qualifier;
@@ -260,23 +255,23 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
             var node = try self.reserveNode(.statement_block);
             errdefer self.unreserveNode(node);
 
-            _ = self.nextToken();
+            _ = try self.nextToken();
 
             var statements: std.ArrayList(Ast.NodeIndex) = .{};
-            defer statements.deinit(self.allocator);
+            defer statements.deinit(self.gpa);
 
             while (self.peekTokenTag().? != .right_brace) {
                 const statement = try self.parseStatement();
 
                 if (statement == Ast.NodeIndex.nil) continue;
 
-                try statements.append(self.allocator, statement);
+                try statements.append(self.gpa, statement);
             }
 
             _ = try self.expectToken(.right_brace);
 
             try self.nodeSetData(&node, .statement_block, .{
-                .statements = try self.node_heap.allocateDupe(self.allocator, Ast.NodeIndex, statements.items),
+                .statements = try self.node_heap.allocateDupe(self.gpa, Ast.NodeIndex, statements.items),
             });
 
             return node;
@@ -329,9 +324,11 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
 
                 if (next_token != .end_of_file) {
                     if (next_token != .identifier) {
-                        defer _ = self.eatToken(.semicolon);
+                        const expr = self.parseExpression(.{});
 
-                        return self.parseExpression(.{});
+                        _ = try self.eatToken(.semicolon);
+
+                        return expr;
                     }
                 }
             }
@@ -339,13 +336,13 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
             var node = try self.reserveNode(.statement_var_init);
             errdefer self.unreserveNode(node);
 
-            const qualifier = self.eatVariableQualifier();
+            const qualifier = try self.eatVariableQualifier();
 
             const type_expr = try self.parseTypeExpr();
 
             const variable_name = try self.expectToken(.identifier);
 
-            if (self.eatToken(.equals) != null) {
+            if (try self.eatToken(.equals) != null) {
                 const expression = try self.parseExpression(.{});
 
                 try self.nodeSetData(&node, .statement_var_init, .{
@@ -367,14 +364,16 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
         },
         .literal_number,
         => {
-            defer _ = self.eatToken(.semicolon);
+            const expr = try self.parseExpression(.{});
 
-            return self.parseExpression(.{});
+            _ = try self.eatToken(.semicolon);
+
+            return expr;
         },
         .literal_string,
         => {
             //TODO: what to do with string literals
-            _ = self.nextToken();
+            _ = try self.nextToken();
 
             @panic("unimplemented: string literals are not supported yet");
         },
@@ -394,7 +393,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
 
             var not_taken_statment = Ast.NodeIndex.nil;
 
-            const else_keyword = self.eatToken(.keyword_else);
+            const else_keyword = try self.eatToken(.keyword_else);
 
             if (else_keyword) |_| {
                 not_taken_statment = try self.parseStatement();
@@ -410,7 +409,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
             return node;
         },
         .keyword_return => {
-            const keyword_return = self.nextToken().?;
+            const keyword_return = try self.nextToken();
 
             var node = try self.reserveNode(.statement_return);
             errdefer self.unreserveNode(node);
@@ -431,7 +430,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
             return node;
         },
         .semicolon => {
-            _ = self.nextToken();
+            _ = try self.nextToken();
             return Ast.NodeIndex.nil;
         },
         else => return self.unexpectedToken(),
@@ -536,7 +535,7 @@ pub fn parseExpression(
 
                 node = try self.reserveNode(.expression_literal_number);
 
-                const literal = self.nextToken().?;
+                const literal = try self.nextToken();
 
                 try self.nodeSetData(&node, .expression_literal_number, .{
                     .token = literal,
@@ -551,7 +550,7 @@ pub fn parseExpression(
 
                 node = try self.reserveNode(.expression_literal_boolean);
 
-                const literal = self.nextToken().?;
+                const literal = try self.nextToken();
 
                 try self.nodeSetData(&node, .expression_literal_boolean, .{
                     .token = literal,
@@ -614,17 +613,14 @@ pub fn parseExpression(
 
                 node = try self.reserveNode(.expression_literal_number);
 
-                const keyword_token: Ast.TokenIndex = self.nextToken().?;
+                const keyword_token: Ast.TokenIndex = try self.nextToken();
 
                 try self.nodeSetData(&node, .expression_identifier, .{
                     .token = keyword_token,
                 });
             },
             .left_paren => {
-                const open_paren = self.eatToken(.left_paren);
-                defer if (open_paren) |_| {
-                    _ = self.eatToken(.right_paren);
-                };
+                const open_paren = try self.eatToken(.left_paren);
 
                 if (self.peekTokenTag() == .right_paren) {
                     node = .nil;
@@ -649,16 +645,13 @@ pub fn parseExpression(
                     },
                     else => {},
                 }
+
+                if (open_paren) |_| {
+                    _ = try self.eatToken(.right_paren);
+                }
             },
             inline else => |tag| {
                 const op_token: Ast.TokenIndex = self.peekToken();
-
-                defer switch (tag) {
-                    .left_bracket => {
-                        _ = self.eatToken(.right_bracket);
-                    },
-                    else => {},
-                };
 
                 if (binary.getNodeType(tag)) |binary_node_type| {
                     const prec = binary.getPrecedence(binary_node_type);
@@ -666,7 +659,7 @@ pub fn parseExpression(
                     if (prec <= context.min_precedence) {
                         break;
                     } else {
-                        _ = self.nextToken();
+                        _ = try self.nextToken();
 
                         const rhs = try self.parseExpression(.{
                             .min_precedence = prec,
@@ -686,6 +679,13 @@ pub fn parseExpression(
                     }
                 } else {
                     break;
+                }
+
+                switch (tag) {
+                    .left_bracket => {
+                        _ = try self.eatToken(.right_bracket);
+                    },
+                    else => {},
                 }
             },
         }
@@ -741,9 +741,9 @@ pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
             var node = try self.reserveNode(.type_expr);
             errdefer self.unreserveNode(node);
 
-            defer _ = self.nextToken();
-
             try self.nodeSetData(&node, .type_expr, .{ .token = self.peekToken() });
+
+            _ = try self.nextToken();
 
             return node;
         },
@@ -754,12 +754,7 @@ pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
 }
 
 pub fn reserveNode(self: *Parser, comptime tag: Ast.Node.Tag) !Ast.NodeIndex {
-    try self.node_context_stack.append(self.allocator, .{
-        .saved_token_window = self.token_window,
-        .saved_error_index = @intCast(self.errors.items.len),
-    });
-
-    const node_index = try self.node_heap.allocateNode(self.allocator, tag);
+    const node_index = try self.node_heap.allocateNode(self.gpa, tag);
 
     return .{
         .tag = tag,
@@ -769,10 +764,6 @@ pub fn reserveNode(self: *Parser, comptime tag: Ast.Node.Tag) !Ast.NodeIndex {
 
 pub fn unreserveNode(self: *Parser, node: Ast.NodeIndex) void {
     self.node_heap.freeNode(node);
-
-    const context = self.node_context_stack.pop().?;
-
-    self.token_window = context.saved_token_window;
 }
 
 pub fn nodeSetData(
@@ -787,19 +778,25 @@ pub fn nodeSetData(
 }
 
 pub fn expectToken(self: *Parser, tag: Token.Tag) !Ast.TokenIndex {
-    errdefer self.errors.append(self.allocator, .{
-        .tag = .expected_token,
-        .anchor = .{ .token = self.peekToken() },
-        .data = .{
-            .expected_token = tag,
-        },
-    }) catch unreachable;
+    const result_token = try self.eatToken(tag);
 
-    return self.eatToken(tag) orelse error.ExpectedToken;
+    if (result_token == null) {
+        try self.errors.append(self.gpa, .{
+            .tag = .expected_token,
+            .anchor = .{ .token = self.peekToken() },
+            .data = .{
+                .expected_token = tag,
+            },
+        });
+
+        return error.ExpectedToken;
+    }
+
+    return result_token.?;
 }
 
 pub fn unexpectedToken(self: *Parser) anyerror {
-    if (self.peekToken().tag != .invalid) self.errors.append(self.allocator, .{
+    if (self.peekToken().tag != .invalid) self.errors.append(self.gpa, .{
         .tag = .unexpected_token,
         .anchor = .{ .token = self.peekToken() },
     }) catch unreachable;
@@ -807,15 +804,15 @@ pub fn unexpectedToken(self: *Parser) anyerror {
     return error.UnexpectedToken;
 }
 
-pub fn eatToken(self: *Parser, tag: Token.Tag) ?Ast.TokenIndex {
+pub fn eatToken(self: *Parser, tag: Token.Tag) !?Ast.TokenIndex {
     if (self.peekToken().tag == tag) {
-        return self.nextToken();
+        return try self.nextToken();
     } else {
         return null;
     }
 }
 
-pub fn nextToken(self: *Parser) ?Ast.TokenIndex {
+pub fn nextToken(self: *Parser) !Ast.TokenIndex {
     //window: previous current next
     //new window: current next next + 1
 
@@ -825,11 +822,9 @@ pub fn nextToken(self: *Parser) ?Ast.TokenIndex {
     self.token_window[1] = current_window[2];
 
     //TODO: handle this error
-    const token = self.advanceTokenizer() catch @panic("Tokenizer advance failed");
+    const token = try self.advanceTokenizer();
 
     self.token_window[2] = token;
-
-    std.log.info("token window: ({}, {}, {})", .{ self.token_window[0].tag, self.token_window[1].tag, token.tag });
 
     return current_window[1];
 }
@@ -870,7 +865,7 @@ pub fn lookAheadToken(self: Parser, comptime amount: comptime_int) Ast.TokenInde
 }
 
 pub fn pushTokenizerState(self: *Parser, new_source_range: Tokenizer.SourceRange, new_define_generation: u32) !void {
-    const saved_state = try self.tokenizer_stack.addOne(self.allocator);
+    const saved_state = try self.tokenizer_stack.addOne(self.gpa);
 
     saved_state.define_generation = self.define_generation;
     saved_state.tokenizer = self.tokenizer;
@@ -890,7 +885,7 @@ pub fn advanceTokenizer(self: *Parser) anyerror!Ast.TokenIndex {
     while (self.tokenizer.next()) |token| {
         switch (token.tag) {
             .invalid => {
-                try self.errors.append(self.allocator, .{
+                try self.errors.append(self.gpa, .{
                     .tag = .invalid_token,
                     .anchor = .{ .token = .fromToken(self.source, self.tokenizer.source, token) },
                 });
@@ -898,7 +893,7 @@ pub fn advanceTokenizer(self: *Parser) anyerror!Ast.TokenIndex {
                 return .fromToken(self.source, self.tokenizer.source, token);
             },
             .reserved_keyword => {
-                try self.errors.append(self.allocator, .{
+                try self.errors.append(self.gpa, .{
                     .tag = .reserved_keyword_token,
                     .anchor = .{ .token = .fromToken(self.source, self.tokenizer.source, token) },
                 });
@@ -908,7 +903,7 @@ pub fn advanceTokenizer(self: *Parser) anyerror!Ast.TokenIndex {
             .directive_version => {
                 const string = "__VERSION__";
 
-                const define = self.defines.getOrPut(self.allocator, string) catch unreachable;
+                const define = self.defines.getOrPut(self.gpa, string) catch unreachable;
                 _ = define; // autofix
 
                 const next_token = self.tokenizer.next();
@@ -922,66 +917,77 @@ pub fn advanceTokenizer(self: *Parser) anyerror!Ast.TokenIndex {
             .directive_if,
             .directive_ifdef,
             .directive_ifndef,
+            .directive_elif,
             => {
-                const identifier_token = self.tokenizer.next() orelse break;
-                const identifier_actual_token: Ast.TokenIndex = .fromToken(self.source, self.tokenizer.source, identifier_token);
+                if (token.tag != .directive_elif) {
+                    const identifier_token = self.tokenizer.next() orelse break;
+                    const identifier_actual_token: Ast.TokenIndex = .fromToken(self.source, self.tokenizer.source, identifier_token);
 
-                const condition_string = self.source[identifier_actual_token.string_length .. identifier_actual_token.string_start + identifier_actual_token.string_length];
+                    const condition_string = self.source[identifier_actual_token.string_start .. identifier_actual_token.string_start + identifier_actual_token.string_length];
 
-                //TODO: handle preprocessor errors
-                var if_condition = false;
+                    self.directive_if_level += 1;
 
-                switch (token.tag) {
-                    .directive_if => {
-                        switch (identifier_token.tag) {
-                            .identifier => {
-                                const string = condition_string;
+                    //TODO: handle preprocessor errors
 
-                                const define_source_range, const define_source_generation = self.directiveResolveMacro(
-                                    string,
-                                ) orelse @panic("TODO: error message not implemented");
-                                _ = define_source_generation; // autofix
+                    switch (token.tag) {
+                        .directive_if => {
+                            switch (identifier_token.tag) {
+                                .identifier => {
+                                    const string = condition_string;
 
-                                var define_tokenizer: Tokenizer = .init(self.source[define_source_range.start..define_source_range.end]);
+                                    const define_source_range, const define_source_generation = self.directiveResolveMacro(
+                                        string,
+                                    ) orelse @panic("TODO: error message not implemented");
+                                    _ = define_source_generation; // autofix
 
-                                //TODO: handle preprocessor expressions
-                                const value_token = define_tokenizer.next().?;
+                                    var define_tokenizer: Tokenizer = .init(self.source[define_source_range.start..define_source_range.end]);
 
-                                const value = try std.fmt.parseUnsigned(
-                                    u64,
-                                    self.tokenizer.source[value_token.start..value_token.end],
-                                    10,
-                                );
-                                if_condition = value != 0;
-                            },
-                            .literal_number => {
-                                const value = try std.fmt.parseUnsigned(
-                                    u64,
-                                    self.tokenizer.source[identifier_token.start..identifier_token.end],
-                                    10,
-                                );
-                                if_condition = value != 0;
+                                    //TODO: handle preprocessor expressions
+                                    const value_token = define_tokenizer.next().?;
 
-                                std.log.info("if_condition = {}", .{if_condition});
-                            },
-                            else => unreachable,
-                        }
-                    },
-                    .directive_ifdef => {
-                        if_condition = self.defines.contains(condition_string);
-                    },
-                    .directive_ifndef => {
-                        if_condition = !self.defines.contains(condition_string);
-                    },
-                    else => unreachable,
+                                    const value = try std.fmt.parseUnsigned(
+                                        u64,
+                                        self.tokenizer.source[value_token.start..value_token.end],
+                                        10,
+                                    );
+                                    self.directive_if_condition = value != 0;
+                                },
+                                .literal_number => {
+                                    const value = try std.fmt.parseUnsigned(
+                                        u64,
+                                        self.tokenizer.source[identifier_token.start..identifier_token.end],
+                                        10,
+                                    );
+                                    self.directive_if_condition = value != 0;
+                                },
+                                else => unreachable,
+                            }
+                        },
+                        .directive_ifdef => {
+                            self.directive_if_condition = self.defines.contains(condition_string);
+                        },
+                        .directive_ifndef => {
+                            self.directive_if_condition = !self.defines.contains(condition_string);
+                        },
+                        else => unreachable,
+                    }
+                } else {
+                    self.directive_if_condition = !self.directive_if_condition;
                 }
 
-                if (if_condition) continue;
+                if (self.directive_if_condition) continue;
 
-                var if_condition_level: u32 = 0;
+                var if_condition_level: u32 = 1;
 
-                while (true) loop_skip: {
-                    _ = self.tokenizer.advanceUntilNextDirective();
+                loop_skip: while (true) {
+                    if (self.tokenizer.advanceUntilNextDirective() == null) {
+                        try self.errors.append(self.gpa, .{
+                            .tag = .expected_endif,
+                            .anchor = .{ .token = .fromToken(self.source, self.tokenizer.source, token) },
+                        });
+
+                        return error.UnexpectedEndif;
+                    }
 
                     //TODO: handle preprocessor errors
                     const directive_token = self.tokenizer.next() orelse break;
@@ -993,8 +999,11 @@ pub fn advanceTokenizer(self: *Parser) anyerror!Ast.TokenIndex {
                         => {
                             if_condition_level += 1;
                         },
-                        .directive_endif => {
-                            if_condition_level -|= 1;
+                        .directive_endif,
+                        .directive_elif,
+                        .directive_end,
+                        => {
+                            if_condition_level -= 1;
 
                             if (if_condition_level == 0) {
                                 break :loop_skip;
@@ -1005,18 +1014,25 @@ pub fn advanceTokenizer(self: *Parser) anyerror!Ast.TokenIndex {
                 }
             },
             .directive_endif => {
-                //TODO: handle trailing endifs
+                if (self.directive_if_level == 0) {
+                    try self.errors.append(self.gpa, .{
+                        .tag = .unexpected_endif,
+                        .anchor = .{ .token = .fromToken(self.source, self.tokenizer.source, token) },
+                    });
+
+                    return error.UnexpectedEndif;
+                }
+
+                self.directive_if_level -= 1;
             },
             .directive_define => {
                 const identifier_token = self.tokenizer.next() orelse break;
 
                 const string = self.tokenizer.source[identifier_token.start..identifier_token.end];
 
-                std.log.info("defining: '{s}'", .{string});
-
                 self.define_generation += 1;
 
-                const define = self.defines.getOrPut(self.allocator, string) catch unreachable;
+                const define = self.defines.getOrPut(self.gpa, string) catch unreachable;
 
                 if (!define.found_existing) {
                     define.value_ptr.* = .{};
@@ -1030,9 +1046,7 @@ pub fn advanceTokenizer(self: *Parser) anyerror!Ast.TokenIndex {
                 //TODO: handle line continuation
                 const line_range = self.tokenizer.advanceLineRange();
 
-                std.log.info("defining: '{s}' as '{s}'", .{ string, self.source[line_range.start..line_range.end] });
-
-                try define.value_ptr.*.generation_to_definition.put(self.allocator, self.define_generation, line_range);
+                try define.value_ptr.*.generation_to_definition.put(self.gpa, self.define_generation, line_range);
             },
             .directive_undef => {
                 const identifier_token = self.tokenizer.next() orelse break;
@@ -1040,10 +1054,12 @@ pub fn advanceTokenizer(self: *Parser) anyerror!Ast.TokenIndex {
                 _ = self.defines.remove(self.tokenizer.source[identifier_token.start..identifier_token.end]);
             },
             .directive_error => {
-                try self.errors.append(self.allocator, .{
+                try self.errors.append(self.gpa, .{
                     .tag = .directive_error,
                     .anchor = .{ .token = .fromToken(self.source, self.tokenizer.source, token) },
                 });
+
+                return error.DirectiveError;
             },
             .directive_end => {},
             .identifier => {
@@ -1051,20 +1067,14 @@ pub fn advanceTokenizer(self: *Parser) anyerror!Ast.TokenIndex {
                     return .fromToken(self.source, self.tokenizer.source, token);
                 };
 
-                std.log.info("Macro resolved to: '{s}'", .{self.source[macro_resolved_range.start..macro_resolved_range.end]});
-
                 try self.pushTokenizerState(macro_resolved_range, macro_resolved_generation);
 
-                const macro_token = try self.advanceTokenizer();
-
-                std.log.info("Macro first token '{}'", .{macro_token.tag});
-
-                return macro_token;
+                return try self.advanceTokenizer();
             },
             .directive_line,
             .directive_include,
             => {
-                try self.errors.append(self.allocator, .{
+                try self.errors.append(self.gpa, .{
                     .tag = .unsupported_directive,
                     .anchor = .{ .token = .fromToken(self.source, self.tokenizer.source, token) },
                 });
