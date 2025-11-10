@@ -211,6 +211,7 @@ pub fn next(self: *Tokenizer) ?Token {
                 else => {
                     const string = self.source[token.start..self.index];
 
+                    //TODO: move this to be after macro expansion
                     if (Token.getKeyword(string)) |keyword_tag| {
                         token.tag = keyword_tag;
                     } else if (Token.reserved_keywords.get(string)) |_| {
@@ -510,7 +511,7 @@ pub fn advanceLineRange(self: *Tokenizer) SourceRange {
 
     const end_offset = std.mem.indexOf(u8, self.source[self.index..], "\n") orelse self.source.len - self.index - 1;
 
-    const line_end = self.index + end_offset + 1;
+    const line_end = self.index + end_offset;
 
     const start = self.index;
 
@@ -522,19 +523,18 @@ pub fn advanceLineRange(self: *Tokenizer) SourceRange {
     };
 }
 
-///Skips over tokens until a new directive is reached, returning the range of text skipped (not including the new directive)
-pub fn advanceUntilNextDirective(self: *Tokenizer) SourceRange {
+///Skips over tokens until a new potential directive is reached, returning the range of text skipped (not including the new directive)
+pub fn advanceUntilNextDirective(self: *Tokenizer) ?SourceRange {
     if (self.index >= self.source.len) {
         return .{ .start = @intCast(self.index), .end = @intCast(self.source.len) };
     }
 
-    const end_offset = std.mem.indexOf(u8, self.source[self.index..], "#") orelse self.source.len - self.index - 1;
-
-    const line_end = self.index + end_offset + 1;
+    const end_offset = std.mem.indexOfPos(u8, self.source, self.index, "#") orelse return null;
 
     const start = self.index;
 
-    self.index = @intCast(line_end);
+    self.index = @intCast(end_offset);
+    self.state = .start;
 
     return .{
         .start = start,
