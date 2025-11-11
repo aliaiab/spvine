@@ -38,8 +38,6 @@ Lol hash1(f32 n) {
 #error oh dear....
 #endif
 
-
-
 float sdCone(vec3 p, vec2 c, float h) {
     // c is the sin/cos of the angle, h is height
     // Alternatively pass q instead of (c,h),
@@ -57,6 +55,7 @@ float sdCone(vec3 p, vec2 c, float h) {
 // #error fuck and shit
 #endif
 
+#if 1
 uint arrayTest(uint x) {
     const uint one_hundred = 100;
     #if 1
@@ -65,16 +64,16 @@ uint arrayTest(uint x) {
         const uint constant_test = 1;
     #endif
 
-    const uint lol_array_len = 4 + 3 * 7;
+    const uint lol_array_len = 1 * (4 + 3 * 7);
 
-    Lol array[lol_array_len];
+    Lol array[one_hundred];
     uint larger_array[11];
-    uint non_array;
+    uint non_array = 1;
 
-    array[lol_array_len * 3 - 1].a = true + 3;
+    array[1 - 1].lol = 1;
 
-    larger_array[9 + constant_test] = x;
-    non_array[2] = 3;
+    // larger_array[9 + constant_test] = x;
+    // non_array[2] = 3;
 
     array[2] = larger_array[1];
 
@@ -83,3 +82,4 @@ uint arrayTest(uint x) {
     // return array[4];
     return array[2];
 }
+#endif

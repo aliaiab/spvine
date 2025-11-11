@@ -7,7 +7,7 @@ pub fn printErrors(
     sema: ?*Sema,
     errors: []const Ast.Error,
     writer: *std.Io.Writer,
-) void {
+) !void {
     for (errors) |error_value| {
         var is_same_line: bool = false;
         var loc: Ast.SourceLocation = undefined;
@@ -296,13 +296,19 @@ pub fn printErrors(
                 }) catch {};
             },
             .cannot_perform_field_access => {
-                writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " cannot perform field access\n" ++ color_end, .{
+                writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " cannot perform field access on type ", .{
                     file_path,
                     loc.line,
                     loc.column,
                     terminal_red,
                     color_end,
                 }) catch {};
+
+                try writer.writeAll("'");
+                try sema.?.printTypeName(ast, writer, error_value.data.cannot_perform_field_access.type_index);
+                try writer.writeAll("'");
+
+                try writer.print(color_end ++ "\n", .{});
             },
             .expression_not_indexable => {
                 writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " expression not indexable\n" ++ color_end, .{
@@ -323,6 +329,31 @@ pub fn printErrors(
                     error_value.data.array_index_out_of_bounds.index,
                     error_value.data.array_index_out_of_bounds.array_length,
                 }) catch {};
+            },
+            .expected_constant_expression => {
+                writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " expected constant expression\n" ++ color_end, .{
+                    file_path,
+                    loc.line,
+                    loc.column,
+                    terminal_red,
+                    color_end,
+                }) catch {};
+            },
+            .no_field_in_struct => {
+                writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " no field '{s}' in struct ", .{
+                    file_path,
+                    loc.line,
+                    loc.column,
+                    terminal_red,
+                    color_end,
+                    ast.tokenString(error_value.anchor.token),
+                }) catch {};
+
+                try writer.writeAll("'");
+                try sema.?.printTypeName(ast, writer, error_value.data.no_field_in_struct.struct_type);
+                try writer.writeAll("'");
+
+                try writer.print(color_end ++ "\n", .{});
             },
         }
 
