@@ -1,4 +1,4 @@
-pub const Air = @import("spirv/Air.zig");
+pub const Ir = @import("spirv/Ir.zig");
 pub const Iterator = @import("spirv/Iterator.zig");
 pub const reflect = @import("spirv/reflect.zig");
 

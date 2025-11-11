@@ -1,4 +1,3 @@
-pub const Air = @import("glsl/Air.zig");
 pub const Ast = @import("glsl/Ast.zig");
 pub const Parser = @import("glsl/Parser.zig");
 pub const Sema = @import("glsl/Sema.zig");
