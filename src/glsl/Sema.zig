@@ -9,6 +9,7 @@ procedure_overloads: token_map.Map(ProcedureOverloads) = .{},
 types: std.ArrayList(Type) = .{},
 type_map: token_map.Map(TypeIndex) = .{},
 spirv_ir: spirv.Ir = .{},
+spirv_ir_type_map: std.AutoArrayHashMapUnmanaged(TypeIndex, spirv.Ir.Node) = .{},
 
 errors: std.ArrayList(Ast.Error) = .{},
 
@@ -882,7 +883,7 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
                         .constant,
                         spirv.Ir.Node.Constant,
                         .{
-                            .type = .nil,
+                            .type = try self.lowerTypeToSpirvType(.literal_int),
                             .value_bits = @truncate(int_value),
                         },
                     ),
@@ -901,7 +902,7 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
                         .constant,
                         spirv.Ir.Node.Constant,
                         .{
-                            .type = .nil,
+                            .type = try self.lowerTypeToSpirvType(.literal_int),
                             .value_bits = @truncate(@as(u64, @intCast(int_value))),
                         },
                     ),
@@ -920,7 +921,7 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
                         .constant,
                         spirv.Ir.Node.Constant,
                         .{
-                            .type = .nil,
+                            .type = try self.lowerTypeToSpirvType(.literal_float),
                             .value_bits = @truncate(@as(u64, @bitCast(float_value))),
                         },
                     ),
@@ -1002,18 +1003,26 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
             };
 
             var ir_node: spirv.Ir.Node = .nil;
+            const ir_type = try self.lowerTypeToSpirvType(coerced_type);
 
             switch (expression.tag) {
                 .expression_binary_add => {
                     ir_node = try self.spirv_ir.appendNode(self.gpa, .fadd, spirv.Ir.Node.FAdd, .{
-                        .type = .nil,
+                        .type = ir_type,
+                        .lhs = lhs_type.ir_node,
+                        .rhs = rhs_type.ir_node,
+                    });
+                },
+                .expression_binary_sub => {
+                    ir_node = try self.spirv_ir.appendNode(self.gpa, .fsub, spirv.Ir.Node.FSub, .{
+                        .type = ir_type,
                         .lhs = lhs_type.ir_node,
                         .rhs = rhs_type.ir_node,
                     });
                 },
                 .expression_binary_mul => {
                     ir_node = try self.spirv_ir.appendNode(self.gpa, .fmul, spirv.Ir.Node.FMul, .{
-                        .type = .nil,
+                        .type = ir_type,
                         .lhs = lhs_type.ir_node,
                         .rhs = rhs_type.ir_node,
                     });
@@ -1117,6 +1126,7 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
             }
 
             var ir_node: spirv.Ir.Node = .nil;
+            const ir_type = try self.lowerTypeToSpirvType(resultant_type);
 
             switch (expression.tag) {
                 .expression_binary_assign => {
@@ -1124,7 +1134,14 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
                 },
                 .expression_binary_assign_add => {
                     ir_node = try self.spirv_ir.appendNode(self.gpa, .fadd, spirv.Ir.Node.FAdd, .{
-                        .type = .nil,
+                        .type = ir_type,
+                        .lhs = lhs_type.ir_node,
+                        .rhs = rhs_type.ir_node,
+                    });
+                },
+                .expression_binary_assign_sub => {
+                    ir_node = try self.spirv_ir.appendNode(self.gpa, .fsub, spirv.Ir.Node.FSub, .{
+                        .type = ir_type,
                         .lhs = lhs_type.ir_node,
                         .rhs = rhs_type.ir_node,
                     });
@@ -1168,10 +1185,14 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
                 return error.TypeIncompatibilty;
             }
 
-            //TODO: codegen
+            const ir_node = try self.spirv_ir.appendNode(self.gpa, .fnegate, spirv.Ir.Node.FNegate, .{
+                .operand = rhs_type.ir_node,
+                .type = try self.lowerTypeToSpirvType(rhs_type.type_index),
+            });
+
             return .{
                 .type_index = rhs_type.type_index,
-                .ir_node = .nil,
+                .ir_node = ir_node,
             };
         },
         .expression_identifier => {
@@ -1969,6 +1990,37 @@ pub const TypeIndex = enum(u64) {
         };
     };
 };
+
+pub fn lowerTypeToSpirvType(self: *Sema, type_index: TypeIndex) !spirv.Ir.Node {
+    if (self.spirv_ir_type_map.get(type_index)) |cached_node| {
+        return cached_node;
+    }
+
+    if (type_index.toArrayIndex() != null) {
+        @panic("unimplemented: Lowering of composite types not yet supported!");
+    }
+
+    const ir_type: spirv.Ir.Node = ir_type: switch (type_index.toData().scalar_type) {
+        .integer => {
+            break :ir_type try self.spirv_ir.appendNode(self.gpa, .type_int, spirv.Ir.Node.TypeInt, .{
+                .signedness = .signed,
+                .bit_width = 32,
+                .range_value_min = std.math.minInt(u32),
+                .range_value_max = std.math.minInt(u32),
+            });
+        },
+        .float => {
+            break :ir_type try self.spirv_ir.appendNode(self.gpa, .type_float, spirv.Ir.Node.TypeFloat, .{
+                .bit_width = 32,
+            });
+        },
+        else => unreachable,
+    };
+
+    try self.spirv_ir_type_map.put(self.gpa, type_index, ir_type);
+
+    return ir_type;
+}
 
 const std = @import("std");
 const Ast = @import("Ast.zig");
