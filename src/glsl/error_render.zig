@@ -173,26 +173,48 @@ pub fn printErrors(
                 }) catch {};
             },
             .type_mismatch => {
-                writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " Type mismatch: cannot convert from type '{s}' to '{s}'\n" ++ color_end, .{
+                writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " Type mismatch: cannot convert from type ", .{
                     file_path,
                     loc.line,
                     loc.column,
                     terminal_red,
                     color_end,
-                    typeDisplayName(sema.?, ast, error_value.data.type_mismatch.rhs_type),
-                    typeDisplayName(sema.?, ast, error_value.data.type_mismatch.lhs_type),
                 }) catch {};
+
+                writer.writeAll("'") catch {};
+                sema.?.printTypeName(ast, writer, error_value.data.type_mismatch.rhs_type) catch {};
+                writer.writeAll("'") catch {};
+
+                writer.writeAll(" to ") catch {};
+
+                writer.writeAll("'") catch {};
+                sema.?.printTypeName(ast, writer, error_value.data.type_mismatch.lhs_type) catch {};
+                writer.writeAll("'") catch {};
+
+                writer.writeAll(color_end) catch {};
+                writer.print("\n", .{}) catch {};
             },
             .type_incompatibility => {
-                writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " incompatible types: '{s}' and '{s}'\n" ++ color_end, .{
+                writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " incompatible types: ", .{
                     file_path,
                     loc.line,
                     loc.column,
                     terminal_red,
                     color_end,
-                    typeDisplayName(sema.?, ast, error_value.data.type_incompatibility.rhs_type),
-                    typeDisplayName(sema.?, ast, error_value.data.type_incompatibility.lhs_type),
                 }) catch {};
+
+                writer.writeAll("'") catch {};
+                sema.?.printTypeName(ast, writer, error_value.data.type_mismatch.lhs_type) catch {};
+                writer.writeAll("'") catch {};
+
+                writer.writeAll(" and ") catch {};
+
+                writer.writeAll("'") catch {};
+                sema.?.printTypeName(ast, writer, error_value.data.type_mismatch.rhs_type) catch {};
+                writer.writeAll("'") catch {};
+
+                writer.writeAll(color_end) catch {};
+                writer.print("\n", .{}) catch {};
             },
             .modified_const => {
                 writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " cannot assign to a constant\n" ++ color_end, .{
@@ -280,6 +302,26 @@ pub fn printErrors(
                     loc.column,
                     terminal_red,
                     color_end,
+                }) catch {};
+            },
+            .expression_not_indexable => {
+                writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " expression not indexable\n" ++ color_end, .{
+                    file_path,
+                    loc.line,
+                    loc.column,
+                    terminal_red,
+                    color_end,
+                }) catch {};
+            },
+            .array_access_out_of_bounds => {
+                writer.print(terminal_bold ++ "{s}:{}:{}: {s}error:{s}" ++ terminal_bold ++ " array index '{}' out of bounds (must be between 0 and {})\n" ++ color_end, .{
+                    file_path,
+                    loc.line,
+                    loc.column,
+                    terminal_red,
+                    color_end,
+                    error_value.data.array_index_out_of_bounds.index,
+                    error_value.data.array_index_out_of_bounds.array_length,
                 }) catch {};
             },
         }
@@ -522,21 +564,6 @@ fn printAstToken(
             }) catch {};
         },
     }
-}
-
-fn typeDisplayName(self: *Sema, ast: Ast, type_index: Sema.TypeIndex) []const u8 {
-    var canonical_type: Sema.TypeIndex = type_index;
-
-    if (canonical_type.toArrayIndex() == null) {
-        var primitive_type: Sema.TypeIndex.TypeIndexData = @bitCast(@intFromEnum(canonical_type));
-
-        //literal_* types should be displayed as just their runtime type for clarity
-        primitive_type.literal = 0;
-
-        canonical_type = @enumFromInt(@as(u64, @bitCast(primitive_type)));
-    }
-
-    return self.typeName(ast, canonical_type);
 }
 
 const std = @import("std");

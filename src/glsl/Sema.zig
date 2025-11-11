@@ -61,6 +61,7 @@ pub const IdentifierDefinition = struct {
     token_index: Ast.TokenIndex,
     type_index: TypeIndex,
     qualifier: ValueQualifier,
+    initial_value: ?u64,
 };
 
 pub const ValueQualifier = enum {
@@ -122,6 +123,8 @@ pub fn analyse(sema: *Sema, ast: Ast, allocator: std.mem.Allocator) !struct {
                         error.ArgumentCountMismatch,
                         error.NoMatchingOverload,
                         error.CannotPeformFieldAccess,
+                        error.ArrayIndexOutOfBounds,
+                        error.ExpressionNotIndexable,
                         => {},
                         else => return e,
                     }
@@ -285,6 +288,7 @@ pub fn analyseProcedure(
             param.name,
             param_type,
             param_definition_qualifier.*,
+            null,
         );
     }
 
@@ -361,7 +365,41 @@ pub fn analyseStatement(
         .statement_var_init => {
             const var_init: Ast.Node.StatementVarInit = ast.dataFromNode(statement_node, .statement_var_init);
 
-            const type_index = try self.resolveTypeFromExpression(ast, statement_node);
+            var type_index = try self.resolveTypeFromTypeExpr(ast, var_init.type_expr);
+
+            if (var_init.array_length_specifier != Ast.NodeIndex.nil) {
+                const array_length = try self.resolveConstantExpression(ast, var_init.array_length_specifier);
+
+                type_index = .array(type_index, @intCast(array_length));
+            }
+
+            var initial_value: ?u64 = null;
+
+            if (var_init.expression != Ast.NodeIndex.nil) {
+                const expression_type_index = try self.resolveTypeFromExpression(ast, var_init.expression);
+
+                _ = switch (coerceTypeAssign(type_index, expression_type_index)) {
+                    .null => {
+                        try self.errors.append(self.gpa, .{
+                            .tag = .type_mismatch,
+                            .anchor = .{ .node = var_init.expression },
+                            .data = .{
+                                .type_mismatch = .{
+                                    .lhs_type = type_index,
+                                    .rhs_type = expression_type_index,
+                                },
+                            },
+                        });
+
+                        return error.TypeMismatch;
+                    },
+                    else => |res| res,
+                };
+
+                if (var_init.qualifier == .keyword_const and expression_type_index.toData().literal == 1) {
+                    initial_value = try self.resolveConstantExpression(ast, var_init.expression);
+                }
+            }
 
             try self.scopeDefine(
                 ast,
@@ -372,6 +410,7 @@ pub fn analyseStatement(
                     .keyword_const => .constant,
                     else => unreachable,
                 },
+                initial_value,
             );
         },
         .statement_if => {
@@ -637,6 +676,7 @@ pub fn scopeDefine(
     identifier_token: Ast.TokenIndex,
     type_index: TypeIndex,
     qualifier: ValueQualifier,
+    initial_value: ?u64,
 ) !void {
     const scope = &self.scope_stack.items[self.scope_stack.items.len - 1];
 
@@ -661,6 +701,7 @@ pub fn scopeDefine(
         .type_index = type_index,
         .token_index = identifier_token,
         .qualifier = qualifier,
+        .initial_value = initial_value,
     });
 }
 
@@ -842,32 +883,6 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
 
             unreachable;
         },
-        .statement_var_init => {
-            const var_init: Ast.Node.StatementVarInit = ast.dataFromNode(expression, .statement_var_init);
-
-            const type_index = try self.resolveTypeFromTypeExpr(ast, var_init.type_expr);
-            const expression_type_index = try self.resolveTypeFromExpression(ast, var_init.expression);
-
-            const resultant_type = switch (coerceTypeAssign(type_index, expression_type_index)) {
-                .null => {
-                    try self.errors.append(self.gpa, .{
-                        .tag = .type_mismatch,
-                        .anchor = .{ .node = var_init.expression },
-                        .data = .{
-                            .type_mismatch = .{
-                                .lhs_type = type_index,
-                                .rhs_type = expression_type_index,
-                            },
-                        },
-                    });
-
-                    return error.TypeMismatch;
-                },
-                else => |res| res,
-            };
-
-            return resultant_type;
-        },
         .expression_binary_eql,
         .expression_binary_neql,
         .expression_binary_lt,
@@ -928,7 +943,12 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
             const lhs_type = try self.resolveTypeFromExpression(ast, binary_expr.left);
             const rhs_type = try self.resolveTypeFromExpression(ast, binary_expr.right);
 
-            const resultant_type = switch (coerceType(lhs_type, rhs_type)) {
+            const coerced_type: TypeIndex = switch (expression.tag) {
+                .expression_binary_mul, .expression_binary_div => coerceTypeMul(lhs_type, rhs_type),
+                else => coerceType(lhs_type, rhs_type),
+            };
+
+            const resultant_type = switch (coerced_type) {
                 .null => {
                     try self.errors.append(self.gpa, .{
                         .tag = .type_mismatch,
@@ -1049,6 +1069,14 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
 
             const definition = try self.scopeResolve(ast, identifier.token);
 
+            if (definition.initial_value != null) {
+                var result_type = definition.type_index.toData();
+
+                result_type.literal = 1;
+
+                return @enumFromInt(@as(u64, @bitCast(result_type)));
+            }
+
             return definition.type_index;
         },
         .expression_binary_proc_call => {
@@ -1096,7 +1124,81 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
 
             @panic("sus");
         },
+        .expression_binary_array_access => {
+            const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_array_access);
+
+            const lhs_type = try self.resolveTypeFromExpression(ast, binary_expr.left);
+            const rhs_type = try self.resolveTypeFromExpression(ast, binary_expr.right);
+
+            if (!lhs_type.isArray()) {
+                //TODO: throw error
+
+                try self.errors.append(self.gpa, .{
+                    .anchor = .{ .node = binary_expr.left },
+                    .tag = .expression_not_indexable,
+                });
+
+                return error.ExpressionNotIndexable;
+            }
+
+            if (rhs_type.toData().literal == 1) {
+                const array_index = try self.resolveConstantExpression(ast, binary_expr.right);
+
+                if (array_index >= lhs_type.toData().array_length) {
+                    try self.errors.append(self.gpa, .{
+                        .anchor = .{ .node = binary_expr.right },
+                        .tag = .array_access_out_of_bounds,
+                        .data = .{ .array_index_out_of_bounds = .{
+                            .array_length = lhs_type.toData().array_length,
+                            .index = @intCast(array_index),
+                        } },
+                    });
+
+                    return error.ArrayIndexOutOfBounds;
+                }
+            }
+
+            return lhs_type.arrayElemType();
+        },
         else => @panic(@tagName(expression.tag)),
+    }
+}
+
+pub fn resolveConstantExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !u64 {
+    switch (expression.tag) {
+        .expression_binary_add,
+        .expression_binary_sub,
+        .expression_binary_mul,
+        .expression_binary_div,
+        => {
+            const add_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_add);
+
+            const lhs = try self.resolveConstantExpression(ast, add_expr.left);
+            const rhs = try self.resolveConstantExpression(ast, add_expr.right);
+
+            return switch (expression.tag) {
+                .expression_binary_add => lhs + rhs,
+                .expression_binary_sub => lhs - rhs,
+                .expression_binary_mul => lhs * rhs,
+                .expression_binary_div => lhs / rhs,
+                else => unreachable,
+            };
+        },
+        .expression_literal_number => {
+            const literal_number_node: Ast.Node.ExpressionLiteralNumber = ast.dataFromNode(expression, .expression_literal_number);
+
+            const value = try std.fmt.parseInt(u64, ast.tokenString(literal_number_node.token), 0);
+
+            return value;
+        },
+        .expression_identifier => {
+            const identifier_node: Ast.Node.Identifier = ast.dataFromNode(expression, .expression_identifier);
+
+            const resolved_definition = try self.scopeResolve(ast, identifier_node.token);
+
+            return resolved_definition.initial_value.?;
+        },
+        else => @panic("TODO: implement error message"),
     }
 }
 
@@ -1114,6 +1216,11 @@ pub fn isExpressionAssignable(self: *Sema, ast: Ast, expression: Ast.NodeIndex) 
             const field_access: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_field_access);
 
             return self.isExpressionAssignable(ast, field_access.left);
+        },
+        .expression_binary_array_access => {
+            const array_access: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_array_access);
+
+            return self.isExpressionAssignable(ast, array_access.left);
         },
         else => return false,
     }
@@ -1133,6 +1240,36 @@ pub fn coerceTypeAssign(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
     }
 
     return result_type;
+}
+
+pub fn coerceTypeMul(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
+    const simple_coerced_type = coerceType(lhs, rhs);
+
+    if (simple_coerced_type != .null) {
+        return simple_coerced_type;
+    }
+
+    const lhs_type_data: TypeIndex.TypeIndexData = @bitCast(@intFromEnum(lhs));
+    const rhs_type_data: TypeIndex.TypeIndexData = @bitCast(@intFromEnum(rhs));
+
+    const scalar_coercion = coerceType(lhs.componentScalar(), rhs.componentScalar());
+
+    if (scalar_coercion == .null) {
+        return .null;
+    }
+
+    var result_type: TypeIndex.TypeIndexData = @bitCast(@intFromEnum(scalar_coercion));
+
+    if (lhs.isScalar() or rhs.isScalar()) {
+        result_type.matrix_row_count = @max(lhs_type_data.matrix_row_count, rhs_type_data.matrix_row_count);
+        result_type.matrix_column_count = @max(lhs_type_data.matrix_column_count, rhs_type_data.matrix_column_count);
+
+        return @enumFromInt(@as(u64, @bitCast(result_type)));
+    }
+
+    return .null;
+    // vecn = scalar * vecn
+    // matnxk = scalar * matnxk
 }
 
 pub fn coerceTypeAddOrSub(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
@@ -1156,6 +1293,10 @@ pub fn coerceType(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
 
     const lhs_primitive: TypeIndex.TypeIndexData = @bitCast(@intFromEnum(lhs));
     const rhs_primitive: TypeIndex.TypeIndexData = @bitCast(@intFromEnum(rhs));
+
+    if (lhs_primitive.array_length > 0 or rhs_primitive.array_length > 0) {
+        return .null;
+    }
 
     if (lhs_primitive.matrix_row_count != rhs_primitive.matrix_row_count or
         lhs_primitive.matrix_column_count != rhs_primitive.matrix_column_count)
@@ -1192,16 +1333,25 @@ pub fn coerceType(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
     return @enumFromInt(@as(u64, @bitCast(result_type)));
 }
 
-pub fn typeName(self: Sema, ast: Ast, type_index: TypeIndex) []const u8 {
+pub fn printTypeName(self: Sema, ast: Ast, writer: *std.Io.Writer, type_index: TypeIndex) !void {
+    if (type_index.isArray()) {
+        try self.printTypeName(ast, writer, type_index.arrayElemType());
+
+        try writer.print("[{}]", .{type_index.toData().array_length});
+
+        return;
+    }
+
     if (type_index.toArrayIndex() == null) {
-        return @tagName(type_index);
+        return try writer.writeAll(@tagName(type_index));
     }
 
     const type_data = &self.types.items[type_index.toArrayIndex().?];
 
     switch (type_data.*) {
         .@"struct" => |struct_data| {
-            return ast.tokenString(struct_data.name);
+            //TODO: handle line continuation
+            return try writer.writeAll(ast.tokenString(struct_data.name));
         },
     }
 }
@@ -1531,19 +1681,66 @@ pub const TypeIndex = enum(u64) {
     )) + 1;
 
     pub fn fromArrayIndex(array_index: usize) TypeIndex {
-        const integer = array_index_begin + array_index;
+        const result: TypeIndexData = .{
+            .array_length = 0,
+            .literal = 0,
+            .sign = 0,
+            .scalar_type = @enumFromInt(0),
+            .matrix_row_count = 0,
+            .matrix_column_count = 0,
+            .aggregate_index = @intCast(array_index + 1),
+        };
 
-        return @enumFromInt(integer);
+        return @enumFromInt(@as(u64, @bitCast(result)));
     }
 
     pub fn toArrayIndex(type_index: TypeIndex) ?usize {
-        const integer = @intFromEnum(type_index);
+        const type_data: TypeIndexData = @bitCast(@intFromEnum(type_index));
 
-        if (integer < array_index_begin) {
-            return null;
-        }
+        if (type_data.aggregate_index == 0) return null;
 
-        return integer - array_index_begin;
+        return @as(usize, type_data.aggregate_index) - 1;
+    }
+
+    pub fn isArray(type_index: TypeIndex) bool {
+        const type_data: TypeIndexData = @bitCast(@intFromEnum(type_index));
+
+        return type_data.array_length > 0;
+    }
+
+    pub fn isScalar(type_index: TypeIndex) bool {
+        const result_type_data: TypeIndexData = @bitCast(@intFromEnum(type_index));
+
+        return result_type_data.matrix_row_count == 0 and result_type_data.matrix_column_count == 0;
+    }
+
+    pub fn arrayElemType(type_index: TypeIndex) TypeIndex {
+        var result_type_data: TypeIndexData = @bitCast(@intFromEnum(type_index));
+
+        result_type_data.array_length = 0;
+
+        return @enumFromInt(@as(u64, @bitCast(result_type_data)));
+    }
+
+    pub fn componentScalar(type_index: TypeIndex) TypeIndex {
+        var result_type_data: TypeIndexData = @bitCast(@intFromEnum(type_index));
+
+        result_type_data.matrix_row_count = 0;
+        result_type_data.matrix_column_count = 0;
+
+        return @enumFromInt(@as(u64, @bitCast(result_type_data)));
+    }
+
+    ///Constructs an array type from a element type and a length
+    pub fn array(element_type: TypeIndex, length: u32) TypeIndex {
+        var result_type_data: TypeIndexData = @bitCast(@intFromEnum(element_type));
+        result_type_data.array_length = length;
+
+        return @enumFromInt(@as(u64, @bitCast(result_type_data)));
+    }
+
+    pub fn toData(self: TypeIndex) TypeIndexData {
+        return @bitCast(@intFromEnum(self));
     }
 
     pub fn isOperatorDefined(self: TypeIndex, tag: Ast.Node.Tag) bool {
