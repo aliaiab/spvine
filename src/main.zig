@@ -74,15 +74,20 @@ pub fn main() !void {
     };
     defer sema.deinit(allocator);
 
-    const spirv_air, const errors = try sema.analyse(ast, allocator);
+    const errors = try sema.analyse(ast, allocator);
     defer allocator.free(errors);
-    _ = spirv_air; // autofix
 
     if (errors.len != 0) {
         try glsl.error_render.printErrors(test_glsl_path, ast, &sema, errors, stderr);
 
         return;
     }
+
+    try sema.spirv_ir.computeGlobalOrdering(&sema.spirv_ir.node_list, allocator);
+
+    try stderr.print("spirv.Ir:\n\n", .{});
+
+    try sema.spirv_ir.printNodes(stderr);
 }
 
 fn printAst(

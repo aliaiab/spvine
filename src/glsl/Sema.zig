@@ -8,14 +8,8 @@ procedures: std.ArrayList(Procedure) = .{},
 procedure_overloads: token_map.Map(ProcedureOverloads) = .{},
 types: std.ArrayList(Type) = .{},
 type_map: token_map.Map(TypeIndex) = .{},
+spirv_ir: spirv.Ir = .{},
 
-air_builder: struct {
-    instructions: std.ArrayList(spirv.Air.Instruction) = .{},
-    blocks: std.ArrayList(spirv.Air.Block) = .{},
-    functions: std.ArrayList(spirv.Air.Function) = .{},
-    variables: std.ArrayList(spirv.Air.Variable) = .{},
-    types: std.ArrayList(spirv.Air.Type) = .{},
-} = .{},
 errors: std.ArrayList(Ast.Error) = .{},
 
 ///Points to a specific overload of a wider function name
@@ -62,6 +56,7 @@ pub const IdentifierDefinition = struct {
     type_index: TypeIndex,
     qualifier: ValueQualifier,
     initial_value: ?u64,
+    ir_node: spirv.Ir.Node,
 };
 
 pub const ValueQualifier = enum {
@@ -99,10 +94,7 @@ pub const Type = union(enum) {
 };
 
 ///Analyse the root node of the ast
-pub fn analyse(sema: *Sema, ast: Ast, allocator: std.mem.Allocator) !struct {
-    spirv.Air,
-    []Ast.Error,
-} {
+pub fn analyse(sema: *Sema, ast: Ast, allocator: std.mem.Allocator) ![]Ast.Error {
     const root_decls = ast.root_decls;
 
     try sema.scopePush();
@@ -144,24 +136,7 @@ pub fn analyse(sema: *Sema, ast: Ast, allocator: std.mem.Allocator) !struct {
         }
     }
 
-    return .{
-        .{
-            .capability = .Shader,
-            .addressing_mode = .logical,
-            .memory_model = .vulkan,
-            .entry_point = .{
-                .execution_mode = .vertex,
-                .name = "main",
-                .interface = &.{},
-            },
-            .instructions = &.{},
-            .blocks = &.{},
-            .functions = &.{},
-            .variables = &.{},
-            .types = &.{},
-        },
-        try sema.errors.toOwnedSlice(allocator),
-    };
+    return try sema.errors.toOwnedSlice(allocator);
 }
 
 pub fn analyseStructDefinition(
@@ -290,6 +265,7 @@ pub fn analyseProcedure(
             param.name,
             param_type,
             param_definition_qualifier.*,
+            .nil,
             null,
         );
     }
@@ -388,11 +364,14 @@ pub fn analyseStatement(
             }
 
             var initial_value: ?u64 = null;
+            var ir_node: spirv.Ir.Node = .nil;
 
             if (var_init.expression != Ast.NodeIndex.nil) {
-                const expression_type_index = try self.resolveTypeFromExpression(ast, var_init.expression);
+                const expression_result = try self.analyseExpression(ast, var_init.expression);
 
-                _ = switch (coerceTypeAssign(type_index, expression_type_index)) {
+                ir_node = expression_result.ir_node;
+
+                _ = switch (coerceTypeAssign(type_index, expression_result.type_index)) {
                     .null => {
                         try self.errors.append(self.gpa, .{
                             .tag = .type_mismatch,
@@ -400,7 +379,7 @@ pub fn analyseStatement(
                             .data = .{
                                 .type_mismatch = .{
                                     .lhs_type = type_index,
-                                    .rhs_type = expression_type_index,
+                                    .rhs_type = expression_result.type_index,
                                 },
                             },
                         });
@@ -410,7 +389,7 @@ pub fn analyseStatement(
                     else => |res| res,
                 };
 
-                if (var_init.qualifier == .keyword_const and expression_type_index.toData().literal == 1) {
+                if (var_init.qualifier == .keyword_const and expression_result.type_index.toData().literal == 1) {
                     initial_value = try self.resolveConstantExpression(ast, var_init.expression);
                 }
             }
@@ -424,15 +403,16 @@ pub fn analyseStatement(
                     .keyword_const => .constant,
                     else => unreachable,
                 },
+                ir_node,
                 initial_value,
             );
         },
         .statement_if => {
             const statement_if: Ast.Node.StatementIf = ast.dataFromNode(statement_node, .statement_if);
 
-            const condition_type = try self.resolveTypeFromExpression(ast, statement_if.condition_expression);
+            const condition_type = try self.analyseExpression(ast, statement_if.condition_expression);
 
-            _ = switch (coerceType(.bool, condition_type)) {
+            _ = switch (coerceType(.bool, condition_type.type_index)) {
                 .null => {
                     try self.errors.append(self.gpa, .{
                         .tag = .type_mismatch,
@@ -440,7 +420,7 @@ pub fn analyseStatement(
                         .data = .{
                             .type_mismatch = .{
                                 .lhs_type = .bool,
-                                .rhs_type = condition_type,
+                                .rhs_type = condition_type.type_index,
                             },
                         },
                     });
@@ -471,12 +451,20 @@ pub fn analyseStatement(
         .expression_binary_assign_bitwise_shift_left,
         .expression_binary_assign_bitwise_shift_right,
         => {
-            _ = try self.resolveTypeFromExpression(ast, statement_node);
+            _ = try self.analyseExpression(ast, statement_node);
         },
         .statement_return => {
             const statement_return: Ast.Node.StatementReturn = ast.dataFromNode(statement_node, .statement_return);
 
-            const expr_type = if (statement_return.expression != Ast.NodeIndex.nil) try self.resolveTypeFromExpression(ast, statement_return.expression) else .void;
+            var expr_type: TypeIndex = .void;
+            var expr_node: spirv.Ir.Node = .nil;
+
+            if (statement_return.expression != Ast.NodeIndex.nil) {
+                const expr_result = try self.analyseExpression(ast, statement_return.expression);
+
+                expr_type = expr_result.type_index;
+                expr_node = expr_result.ir_node;
+            }
 
             _ = switch (coerceTypeAssign(procedure.general_data.return_type, expr_type)) {
                 .null => {
@@ -499,6 +487,10 @@ pub fn analyseStatement(
                 },
                 else => |res| res,
             };
+
+            _ = try self.spirv_ir.appendNode(self.gpa, .return_value, spirv.Ir.Node.ReturnValue, .{
+                .return_value = expr_node,
+            });
         },
         else => @panic(@tagName(statement_node.tag)),
     }
@@ -651,12 +643,12 @@ pub fn analyseArgList(
         else => {
             const position = state.base_position;
 
-            const expr_type = try self.resolveTypeFromExpression(ast, node);
+            const expr_type = try self.analyseExpression(ast, node);
 
-            var expr_type_prim: TypeIndex.TypeIndexData = @bitCast(@intFromEnum(expr_type));
+            var expr_type_prim: TypeIndex.TypeIndexData = @bitCast(@intFromEnum(expr_type.type_index));
 
             //This canonicalizes primitive types like literal_uint -> uint
-            if (expr_type.toArrayIndex() == null) {
+            if (expr_type.type_index.toArrayIndex() == null) {
                 expr_type_prim.literal = 0;
             }
 
@@ -690,6 +682,7 @@ pub fn scopeDefine(
     identifier_token: Ast.TokenIndex,
     type_index: TypeIndex,
     qualifier: ValueQualifier,
+    ir_node: spirv.Ir.Node,
     initial_value: ?u64,
 ) !void {
     const scope = &self.scope_stack.items[self.scope_stack.items.len - 1];
@@ -716,6 +709,7 @@ pub fn scopeDefine(
         .token_index = identifier_token,
         .qualifier = qualifier,
         .initial_value = initial_value,
+        .ir_node = ir_node,
     });
 }
 
@@ -864,31 +858,73 @@ pub fn resolveTypeFromIdentifierNoError(self: *Sema, ast: Ast, type_expr_token: 
     };
 }
 
-pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !TypeIndex {
+pub const AnalyseExpressionResult = struct {
+    type_index: TypeIndex,
+    ir_node: spirv.Ir.Node,
+};
+
+pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !AnalyseExpressionResult {
     switch (expression.tag) {
-        .expression_literal_boolean => return .literal_bool,
+        .expression_literal_boolean => return .{
+            .type_index = .literal_bool,
+            //TODO: generate IR
+            .ir_node = .nil,
+        },
         .expression_literal_number => {
             const number_literal_data: Ast.Node.ExpressionLiteralNumber = ast.dataFromNode(expression, .expression_literal_number);
 
             //TODO: optimize this by using a custom parse function which just determines type
-            if (std.fmt.parseInt(u64, ast.tokenString(number_literal_data.token), 10)) |_| {
-                return .literal_uint;
+            if (std.fmt.parseInt(u64, ast.tokenString(number_literal_data.token), 10)) |int_value| {
+                return .{
+                    .type_index = .literal_uint,
+                    .ir_node = try self.spirv_ir.appendNode(
+                        self.gpa,
+                        .constant,
+                        spirv.Ir.Node.Constant,
+                        .{
+                            .type = .nil,
+                            .value_bits = @truncate(int_value),
+                        },
+                    ),
+                };
             } else |e| {
                 switch (e) {
                     else => {},
                 }
             }
 
-            if (std.fmt.parseInt(i64, ast.tokenString(number_literal_data.token), 10)) |_| {
-                return .literal_int;
+            if (std.fmt.parseInt(i64, ast.tokenString(number_literal_data.token), 10)) |int_value| {
+                return .{
+                    .type_index = .literal_int,
+                    .ir_node = try self.spirv_ir.appendNode(
+                        self.gpa,
+                        .constant,
+                        spirv.Ir.Node.Constant,
+                        .{
+                            .type = .nil,
+                            .value_bits = @truncate(@as(u64, @intCast(int_value))),
+                        },
+                    ),
+                };
             } else |e| {
                 switch (e) {
                     else => {},
                 }
             }
 
-            if (std.fmt.parseFloat(f64, ast.tokenString(number_literal_data.token))) |_| {
-                return .literal_float;
+            if (std.fmt.parseFloat(f64, ast.tokenString(number_literal_data.token))) |float_value| {
+                return .{
+                    .type_index = .literal_float,
+                    .ir_node = try self.spirv_ir.appendNode(
+                        self.gpa,
+                        .constant,
+                        spirv.Ir.Node.Constant,
+                        .{
+                            .type = .nil,
+                            .value_bits = @truncate(@as(u64, @bitCast(float_value))),
+                        },
+                    ),
+                };
             } else |e| {
                 switch (e) {
                     else => {},
@@ -906,18 +942,18 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
         => {
             const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_add);
 
-            const lhs_type = try self.resolveTypeFromExpression(ast, binary_expr.left);
-            const rhs_type = try self.resolveTypeFromExpression(ast, binary_expr.right);
+            const lhs_type = try self.analyseExpression(ast, binary_expr.left);
+            const rhs_type = try self.analyseExpression(ast, binary_expr.right);
 
-            const comparison_type = switch (coerceType(lhs_type, rhs_type)) {
+            const comparison_type = switch (coerceType(lhs_type.type_index, rhs_type.type_index)) {
                 .null => {
                     try self.errors.append(self.gpa, .{
                         .tag = .type_mismatch,
                         .anchor = .{ .token = binary_expr.op_token },
                         .data = .{
                             .type_mismatch = .{
-                                .lhs_type = lhs_type,
-                                .rhs_type = rhs_type,
+                                .lhs_type = lhs_type.type_index,
+                                .rhs_type = rhs_type.type_index,
                             },
                         },
                     });
@@ -933,8 +969,8 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                     .anchor = .{ .node = expression },
                     .data = .{
                         .type_incompatibility = .{
-                            .lhs_type = lhs_type,
-                            .rhs_type = rhs_type,
+                            .lhs_type = lhs_type.type_index,
+                            .rhs_type = rhs_type.type_index,
                         },
                     },
                 });
@@ -942,7 +978,10 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                 return error.TypeIncompatibilty;
             }
 
-            return .bool;
+            return .{
+                .type_index = .bool,
+                .ir_node = .nil,
+            };
         },
         .expression_binary_add,
         .expression_binary_sub,
@@ -954,13 +993,33 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
         => {
             const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_add);
 
-            const lhs_type = try self.resolveTypeFromExpression(ast, binary_expr.left);
-            const rhs_type = try self.resolveTypeFromExpression(ast, binary_expr.right);
+            const lhs_type = try self.analyseExpression(ast, binary_expr.left);
+            const rhs_type = try self.analyseExpression(ast, binary_expr.right);
 
             const coerced_type: TypeIndex = switch (expression.tag) {
-                .expression_binary_mul, .expression_binary_div => coerceTypeMul(lhs_type, rhs_type),
-                else => coerceType(lhs_type, rhs_type),
+                .expression_binary_mul, .expression_binary_div => coerceTypeMul(lhs_type.type_index, rhs_type.type_index),
+                else => coerceType(lhs_type.type_index, rhs_type.type_index),
             };
+
+            var ir_node: spirv.Ir.Node = .nil;
+
+            switch (expression.tag) {
+                .expression_binary_add => {
+                    ir_node = try self.spirv_ir.appendNode(self.gpa, .fadd, spirv.Ir.Node.FAdd, .{
+                        .type = .nil,
+                        .lhs = lhs_type.ir_node,
+                        .rhs = rhs_type.ir_node,
+                    });
+                },
+                .expression_binary_mul => {
+                    ir_node = try self.spirv_ir.appendNode(self.gpa, .fmul, spirv.Ir.Node.FMul, .{
+                        .type = .nil,
+                        .lhs = lhs_type.ir_node,
+                        .rhs = rhs_type.ir_node,
+                    });
+                },
+                else => {},
+            }
 
             const resultant_type = switch (coerced_type) {
                 .null => {
@@ -969,8 +1028,8 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                         .anchor = .{ .node = expression },
                         .data = .{
                             .type_mismatch = .{
-                                .lhs_type = lhs_type,
-                                .rhs_type = rhs_type,
+                                .lhs_type = lhs_type.type_index,
+                                .rhs_type = rhs_type.type_index,
                             },
                         },
                     });
@@ -986,8 +1045,8 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                     .anchor = .{ .node = expression },
                     .data = .{
                         .type_incompatibility = .{
-                            .lhs_type = lhs_type,
-                            .rhs_type = rhs_type,
+                            .lhs_type = lhs_type.type_index,
+                            .rhs_type = rhs_type.type_index,
                         },
                     },
                 });
@@ -995,7 +1054,10 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                 return error.TypeIncompatibilty;
             }
 
-            return resultant_type;
+            return .{
+                .type_index = resultant_type,
+                .ir_node = ir_node,
+            };
         },
         .expression_binary_assign,
         .expression_binary_assign_add,
@@ -1007,8 +1069,8 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
         => {
             const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_add);
 
-            const lhs_type = try self.resolveTypeFromExpression(ast, binary_expr.left);
-            const rhs_type = try self.resolveTypeFromExpression(ast, binary_expr.right);
+            const lhs_type = try self.analyseExpression(ast, binary_expr.left);
+            const rhs_type = try self.analyseExpression(ast, binary_expr.right);
 
             const assignable = try self.isExpressionAssignable(ast, binary_expr.left);
 
@@ -1021,15 +1083,15 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                 return error.ModifiedConstant;
             }
 
-            const resultant_type = switch (coerceTypeAssign(lhs_type, rhs_type)) {
+            const resultant_type = switch (coerceTypeAssign(lhs_type.type_index, rhs_type.type_index)) {
                 .null => {
                     try self.errors.append(self.gpa, .{
                         .tag = .type_mismatch,
                         .anchor = .{ .token = binary_expr.op_token },
                         .data = .{
                             .type_mismatch = .{
-                                .lhs_type = lhs_type,
-                                .rhs_type = rhs_type,
+                                .lhs_type = lhs_type.type_index,
+                                .rhs_type = rhs_type.type_index,
                             },
                         },
                     });
@@ -1045,8 +1107,8 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                     .anchor = .{ .node = expression },
                     .data = .{
                         .type_incompatibility = .{
-                            .lhs_type = lhs_type,
-                            .rhs_type = rhs_type,
+                            .lhs_type = lhs_type.type_index,
+                            .rhs_type = rhs_type.type_index,
                         },
                     },
                 });
@@ -1054,21 +1116,51 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                 return error.TypeIncompatibilty;
             }
 
-            return resultant_type;
+            var ir_node: spirv.Ir.Node = .nil;
+
+            switch (expression.tag) {
+                .expression_binary_assign => {
+                    ir_node = rhs_type.ir_node;
+                },
+                .expression_binary_assign_add => {
+                    ir_node = try self.spirv_ir.appendNode(self.gpa, .fadd, spirv.Ir.Node.FAdd, .{
+                        .type = .nil,
+                        .lhs = lhs_type.ir_node,
+                        .rhs = rhs_type.ir_node,
+                    });
+                },
+                else => {},
+            }
+
+            switch (binary_expr.left.tag) {
+                .expression_identifier => {
+                    const identifier_expression: Ast.Node.Identifier = ast.dataFromNode(binary_expr.left, .expression_identifier);
+
+                    const identifier_def = try self.scopeResolve(ast, identifier_expression.token);
+
+                    identifier_def.ir_node = ir_node;
+                },
+                else => unreachable,
+            }
+
+            return .{
+                .type_index = resultant_type,
+                .ir_node = ir_node,
+            };
         },
         .expression_unary_minus => {
             const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_unary_minus);
 
-            const rhs_type = try self.resolveTypeFromExpression(ast, binary_expr.right);
+            const rhs_type = try self.analyseExpression(ast, binary_expr.right);
 
-            if (!rhs_type.isOperatorDefined(expression.tag)) {
+            if (!rhs_type.type_index.isOperatorDefined(expression.tag)) {
                 try self.errors.append(self.gpa, .{
                     .tag = .type_incompatibility,
                     .anchor = .{ .node = expression },
                     .data = .{
                         .type_incompatibility = .{
-                            .lhs_type = rhs_type,
-                            .rhs_type = rhs_type,
+                            .lhs_type = rhs_type.type_index,
+                            .rhs_type = rhs_type.type_index,
                         },
                     },
                 });
@@ -1076,7 +1168,11 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                 return error.TypeIncompatibilty;
             }
 
-            return rhs_type;
+            //TODO: codegen
+            return .{
+                .type_index = rhs_type.type_index,
+                .ir_node = .nil,
+            };
         },
         .expression_identifier => {
             const identifier: Ast.Node.Identifier = ast.dataFromNode(expression, .expression_identifier);
@@ -1088,10 +1184,17 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
 
                 result_type.literal = 1;
 
-                return @enumFromInt(@as(u64, @bitCast(result_type)));
+                return .{
+                    .type_index = @enumFromInt(@as(u64, @bitCast(result_type))),
+                    .ir_node = definition.ir_node,
+                };
             }
 
-            return definition.type_index;
+            //TODO: resolve the latest SSA value
+            return .{
+                .type_index = definition.type_index,
+                .ir_node = definition.ir_node,
+            };
         },
         .expression_binary_proc_call => {
             const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_proc_call);
@@ -1103,40 +1206,46 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
             const type_for_constructor: TypeIndex = self.resolveTypeFromIdentifierNoError(ast, identifier_data.token) orelse .null;
 
             if (type_for_constructor != .null) {
-                return type_for_constructor;
+                return .{
+                    .type_index = type_for_constructor,
+                    .ir_node = .nil,
+                };
             }
 
             const arg_list = binary_expr.right;
 
             const procedure = try self.resolveProcedure(ast, identifier, arg_list);
 
-            return procedure.general_data.return_type;
+            return .{
+                .type_index = procedure.general_data.return_type,
+                .ir_node = .nil,
+            };
         },
         .expression_binary_field_access => {
             const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_field_access);
 
-            const lhs_type = try self.resolveTypeFromExpression(ast, binary_expr.left);
+            const lhs_type = try self.analyseExpression(ast, binary_expr.left);
             const rhs_identifier: Ast.Node.Identifier = ast.dataFromNode(binary_expr.right, .expression_identifier);
 
             //TODO: support vectors
-            if (lhs_type.toArrayIndex() == null) {
+            if (lhs_type.type_index.toArrayIndex() == null) {
                 try self.errors.append(self.gpa, .{
                     .anchor = .{ .node = expression },
                     .tag = .cannot_perform_field_access,
                     .data = .{
-                        .cannot_perform_field_access = .{ .type_index = lhs_type },
+                        .cannot_perform_field_access = .{ .type_index = lhs_type.type_index },
                     },
                 });
 
                 return error.CannotPeformFieldAccess;
             }
 
-            const type_data = self.types.items[lhs_type.toArrayIndex().?];
+            const type_data = self.types.items[lhs_type.type_index.toArrayIndex().?];
 
             const maybe_field = type_data.@"struct".fields.get(ast.tokenString(rhs_identifier.token));
 
             if (maybe_field) |field| {
-                return field.type_index;
+                return .{ .type_index = field.type_index, .ir_node = .nil };
             }
 
             try self.errors.append(self.gpa, .{
@@ -1146,7 +1255,7 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                 .tag = .no_field_in_struct,
                 .data = .{
                     .no_field_in_struct = .{
-                        .struct_type = lhs_type,
+                        .struct_type = lhs_type.type_index,
                     },
                 },
             });
@@ -1156,10 +1265,10 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
         .expression_binary_array_access => {
             const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_array_access);
 
-            const lhs_type = try self.resolveTypeFromExpression(ast, binary_expr.left);
-            const rhs_type = try self.resolveTypeFromExpression(ast, binary_expr.right);
+            const lhs_type = try self.analyseExpression(ast, binary_expr.left);
+            const rhs_type = try self.analyseExpression(ast, binary_expr.right);
 
-            if (!lhs_type.isArray()) {
+            if (!lhs_type.type_index.isArray()) {
                 //TODO: throw error
 
                 try self.errors.append(self.gpa, .{
@@ -1170,15 +1279,15 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                 return error.ExpressionNotIndexable;
             }
 
-            if (rhs_type.toData().literal == 1) {
+            if (rhs_type.type_index.toData().literal == 1) {
                 const array_index = try self.resolveConstantExpression(ast, binary_expr.right);
 
-                if (array_index >= lhs_type.toData().array_length) {
+                if (array_index >= lhs_type.type_index.toData().array_length) {
                     try self.errors.append(self.gpa, .{
                         .anchor = .{ .node = binary_expr.right },
                         .tag = .array_access_out_of_bounds,
                         .data = .{ .array_index_out_of_bounds = .{
-                            .array_length = lhs_type.toData().array_length,
+                            .array_length = lhs_type.type_index.toData().array_length,
                             .index = @intCast(array_index),
                         } },
                     });
@@ -1187,7 +1296,10 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                 }
             }
 
-            return lhs_type.arrayElemType();
+            return .{
+                .type_index = lhs_type.type_index.arrayElemType(),
+                .ir_node = .nil,
+            };
         },
         else => @panic(@tagName(expression.tag)),
     }
