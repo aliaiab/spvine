@@ -6,6 +6,125 @@ node_list: std.ArrayList(Node) = .{},
 types: std.AutoArrayHashMapUnmanaged(Node, void) = .{},
 constants: std.AutoArrayHashMapUnmanaged(Node.Constant, Node) = .{},
 
+node_dedup_map: std.StringArrayHashMapUnmanaged(Node) = .{},
+
+pub fn buildNodeOpConstant(
+    ir: *Ir,
+    allocator: std.mem.Allocator,
+    constant: Node.Constant,
+) !Node {
+    return try ir.appendNode(allocator, .constant, Node.Constant, constant);
+}
+
+pub fn buildNodeOpFAdd(
+    ir: *Ir,
+    allocator: std.mem.Allocator,
+    result_type: Node,
+    lhs: Node,
+    rhs: Node,
+) !Node {
+    if (ir.nodeTag(lhs).* == .constant and ir.nodeTag(rhs).* == .constant) {
+        const lhs_value = ir.nodeData(lhs, Node.Constant);
+        const rhs_value = ir.nodeData(rhs, Node.Constant);
+
+        const addition = lhs_value.value(f32) + rhs_value.value(f32);
+
+        return try ir.appendNode(allocator, .constant, Node.Constant, .{
+            .type = lhs_value.type,
+            .value_bits = @bitCast(addition),
+        });
+    }
+
+    const result_node = try ir.appendNode(allocator, .fadd, Node.FAdd, .{
+        .type = result_type,
+        .lhs = lhs,
+        .rhs = rhs,
+    });
+
+    return result_node;
+}
+
+pub fn buildNodeOpFSub(
+    ir: *Ir,
+    allocator: std.mem.Allocator,
+    result_type: Node,
+    lhs: Node,
+    rhs: Node,
+) !Node {
+    if (ir.nodeTag(lhs).* == .constant and ir.nodeTag(rhs).* == .constant) {
+        const lhs_value = ir.nodeData(lhs, Node.Constant);
+        const rhs_value = ir.nodeData(rhs, Node.Constant);
+
+        const addition = lhs_value.value(f32) - rhs_value.value(f32);
+
+        return try ir.appendNode(allocator, .constant, Node.Constant, .{
+            .type = lhs_value.type,
+            .value_bits = @bitCast(addition),
+        });
+    }
+
+    const result_node = try ir.appendNode(allocator, .fsub, Node.FSub, .{
+        .type = result_type,
+        .lhs = lhs,
+        .rhs = rhs,
+    });
+
+    return result_node;
+}
+
+pub fn buildNodeOpFMul(
+    ir: *Ir,
+    allocator: std.mem.Allocator,
+    result_type: Node,
+    lhs: Node,
+    rhs: Node,
+) !Node {
+    if (ir.nodeTag(lhs).* == .constant and ir.nodeTag(rhs).* == .constant) {
+        const lhs_value = ir.nodeData(lhs, Node.Constant);
+        const rhs_value = ir.nodeData(rhs, Node.Constant);
+
+        const addition = lhs_value.value(f32) * rhs_value.value(f32);
+
+        return try ir.appendNode(allocator, .constant, Node.Constant, .{
+            .type = lhs_value.type,
+            .value_bits = @bitCast(addition),
+        });
+    }
+
+    const result_node = try ir.appendNode(allocator, .fmul, Node.FMul, .{
+        .type = result_type,
+        .lhs = lhs,
+        .rhs = rhs,
+    });
+
+    return result_node;
+}
+
+pub fn buildNodeOpFNegate(
+    ir: *Ir,
+    allocator: std.mem.Allocator,
+    result_type: Node,
+    operand: Node,
+) !Node {
+    if (ir.nodeTag(operand).* == .constant) {
+        const operand_value = ir.nodeData(operand, Node.Constant);
+
+        const negation = -operand_value.value(f32);
+
+        return try ir.appendNode(allocator, .constant, Node.Constant, .{
+            .type = operand_value.type,
+            .value_bits = @bitCast(negation),
+        });
+    }
+
+    const result_node = try ir.appendNode(allocator, .fnegate, Node.FNegate, .{
+        .type = result_type,
+        .operand = operand,
+    });
+
+    return result_node;
+}
+
 pub fn appendNode(
     ir: *Ir,
     allocator: std.mem.Allocator,
@@ -13,10 +132,19 @@ pub fn appendNode(
     T: type,
     node_data: T,
 ) !Node {
-    const node_offset: usize = ir.node_buffer.items.len;
+    const instruction = &node_data;
+
+    const node_bytes = std.mem.asBytes(instruction);
+
+    const node_query = try ir.node_dedup_map.getOrPut(allocator, node_bytes);
+
+    if (node_query.found_existing) {
+        return node_query.value_ptr.*;
+    }
 
     const words_to_append = std.math.divCeil(comptime_int, @sizeOf(T), @sizeOf(u32)) catch @compileError("Type T have size divisible by 4 bytes");
 
+    const node_offset: usize = ir.node_buffer.items.len;
     try ir.node_buffer.appendNTimes(allocator, undefined, words_to_append);
 
     const node: Node = .{ .offset = @intCast(node_offset) };
@@ -29,6 +157,8 @@ pub fn appendNode(
         },
         else => {},
     }
+
+    node_query.value_ptr.* = node;
 
     return node;
 }
@@ -177,7 +307,7 @@ pub const Node = packed struct(u32) {
     pub const nil: Node = .{ .offset = std.math.maxInt(u32) };
 
     pub const Tag = enum(u32) {
-        null = 0,
+        null,
 
         type_int,
         type_float,
@@ -190,6 +320,19 @@ pub const Node = packed struct(u32) {
         fmul,
         fnegate,
         return_value,
+    };
+
+    pub const Data = union(Tag) {
+        null: void,
+        type_int: TypeInt,
+        type_float: TypeFloat,
+        constant: Constant,
+        variable: Variable,
+        fadd: FAdd,
+        fsub: FSub,
+        fmul: FMul,
+        fnegate: FNegate,
+        return_value: ReturnValue,
     };
 
     pub const TypeFloat = struct {
@@ -215,6 +358,10 @@ pub const Node = packed struct(u32) {
         tag: Tag = .constant,
         type: Node,
         value_bits: u32,
+
+        pub fn value(constant: Constant, comptime T: type) T {
+            return @bitCast(constant.value_bits);
+        }
     };
 
     pub const Variable = struct {
