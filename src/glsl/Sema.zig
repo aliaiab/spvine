@@ -125,6 +125,8 @@ pub fn analyse(sema: *Sema, ast: Ast, allocator: std.mem.Allocator) !struct {
                         error.CannotPeformFieldAccess,
                         error.ArrayIndexOutOfBounds,
                         error.ExpressionNotIndexable,
+                        error.ExpectedConstantExpression,
+                        error.NoFieldInStruct,
                         => {},
                         else => return e,
                     }
@@ -368,7 +370,19 @@ pub fn analyseStatement(
             var type_index = try self.resolveTypeFromTypeExpr(ast, var_init.type_expr);
 
             if (var_init.array_length_specifier != Ast.NodeIndex.nil) {
-                const array_length = try self.resolveConstantExpression(ast, var_init.array_length_specifier);
+                const array_length = self.resolveConstantExpression(ast, var_init.array_length_specifier) catch |e| {
+                    switch (e) {
+                        error.ConstantEvaluationFailed => {
+                            try self.errors.append(self.gpa, .{
+                                .anchor = .{ .node = var_init.array_length_specifier },
+                                .tag = .expected_constant_expression,
+                            });
+
+                            return error.ExpectedConstantExpression;
+                        },
+                        else => return e,
+                    }
+                };
 
                 type_index = .array(type_index, @intCast(array_length));
             }
@@ -1109,6 +1123,9 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                 try self.errors.append(self.gpa, .{
                     .anchor = .{ .node = expression },
                     .tag = .cannot_perform_field_access,
+                    .data = .{
+                        .cannot_perform_field_access = .{ .type_index = lhs_type },
+                    },
                 });
 
                 return error.CannotPeformFieldAccess;
@@ -1122,7 +1139,19 @@ pub fn resolveTypeFromExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
                 return field.type_index;
             }
 
-            @panic("sus");
+            try self.errors.append(self.gpa, .{
+                .anchor = .{
+                    .token = rhs_identifier.token,
+                },
+                .tag = .no_field_in_struct,
+                .data = .{
+                    .no_field_in_struct = .{
+                        .struct_type = lhs_type,
+                    },
+                },
+            });
+
+            return error.NoFieldInStruct;
         },
         .expression_binary_array_access => {
             const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_array_access);
@@ -1196,7 +1225,7 @@ pub fn resolveConstantExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
 
             const resolved_definition = try self.scopeResolve(ast, identifier_node.token);
 
-            return resolved_definition.initial_value.?;
+            return resolved_definition.initial_value orelse return error.ConstantEvaluationFailed;
         },
         else => @panic("TODO: implement error message"),
     }
