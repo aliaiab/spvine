@@ -141,6 +141,7 @@ fn nodeStringRecursive(
         .expression_binary_comma,
         .expression_binary_proc_call,
         .expression_binary_field_access,
+        .expression_binary_array_access,
         .expression_binary_bitwise_xor,
         .expression_binary_bitwise_shift_left,
         .expression_binary_bitwise_shift_right,
@@ -244,6 +245,10 @@ pub const Error = struct {
             expected_max_count: u32,
             actual_argument_count: u32,
         },
+        array_index_out_of_bounds: struct {
+            array_length: u32,
+            index: i32,
+        },
     } = .{ .none = {} },
 
     pub const Tag = enum(u8) {
@@ -266,6 +271,8 @@ pub const Error = struct {
         argument_count_out_of_range,
         no_matching_overload,
         cannot_perform_field_access,
+        expression_not_indexable,
+        array_access_out_of_bounds,
     };
 };
 
@@ -359,6 +366,7 @@ pub const Node = struct {
         expression_binary_proc_call,
         expression_binary_comma,
         expression_binary_field_access,
+        expression_binary_array_access,
 
         expression_unary_minus,
     };
@@ -404,6 +412,7 @@ pub const Node = struct {
         expression_binary_proc_call: BinaryExpression,
         expression_binary_comma: BinaryExpression,
         expression_binary_field_access: BinaryExpression,
+        expression_binary_array_access: BinaryExpression,
         expression_unary_minus: BinaryExpression,
     };
 
@@ -472,6 +481,7 @@ pub const Node = struct {
         identifier: TokenIndex,
         qualifier: Token.Tag,
         type_expr: NodeIndex,
+        array_length_specifier: NodeIndex,
         expression: NodeIndex,
     };
 

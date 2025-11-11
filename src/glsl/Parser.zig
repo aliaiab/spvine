@@ -281,6 +281,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
         },
         .keyword_const,
         .keyword_float,
+        .keyword_double,
         .keyword_uint,
         .keyword_int,
         .keyword_bool,
@@ -342,11 +343,26 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
 
             const variable_name = try self.expectToken(.identifier);
 
+            const array_left_bracket = try self.eatToken(.left_bracket);
+
+            var array_length_specifier: Ast.NodeIndex = .nil;
+
+            if (array_left_bracket != null) {
+                //TODO: I don't know if parsing this an expression is too lenient.
+                //I think it's fine to just let semantic analysis check if this is a constant
+                const array_length_expr = try self.parseExpression(.{});
+
+                array_length_specifier = array_length_expr;
+
+                _ = try self.expectToken(.right_bracket);
+            }
+
             if (try self.eatToken(.equals) != null) {
                 const expression = try self.parseExpression(.{});
 
                 try self.nodeSetData(&node, .statement_var_init, .{
                     .type_expr = type_expr,
+                    .array_length_specifier = array_length_specifier,
                     .identifier = variable_name,
                     .expression = expression,
                     .qualifier = qualifier,
@@ -354,6 +370,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
             } else {
                 try self.nodeSetData(&node, .statement_var_init, .{
                     .type_expr = type_expr,
+                    .array_length_specifier = array_length_specifier,
                     .identifier = variable_name,
                     .qualifier = qualifier,
                     .expression = Ast.NodeIndex.nil,
@@ -456,6 +473,7 @@ pub fn parseExpression(
             pub inline fn getPrecedence(comptime node_tag: Ast.Node.Tag) i32 {
                 return switch (node_tag) {
                     .expression_binary_field_access,
+                    .expression_binary_array_access,
                     => 10,
                     .expression_unary_minus,
                     => 9,
@@ -508,6 +526,7 @@ pub fn parseExpression(
                     .comma => .expression_binary_comma,
                     .unary_minus => .expression_unary_minus,
                     .period => .expression_binary_field_access,
+                    .left_bracket => .expression_binary_array_access,
                     .caret => .expression_binary_bitwise_xor,
                     .double_left_angled_bracket => .expression_binary_bitwise_shift_left,
                     .double_right_angled_bracket => .expression_binary_bitwise_shift_right,
@@ -589,6 +608,9 @@ pub fn parseExpression(
             .keyword_dvec2,
             .keyword_dvec3,
             .keyword_dvec4,
+            .keyword_mat2,
+            .keyword_mat3,
+            .keyword_mat4,
             .keyword_mat2x2,
             .keyword_mat3x3,
             .keyword_mat4x4,
@@ -611,7 +633,7 @@ pub fn parseExpression(
                     return self.unexpectedToken();
                 }
 
-                node = try self.reserveNode(.expression_literal_number);
+                node = try self.reserveNode(.expression_identifier);
 
                 const keyword_token: Ast.TokenIndex = try self.nextToken();
 
@@ -650,6 +672,37 @@ pub fn parseExpression(
                     _ = try self.eatToken(.right_paren);
                 }
             },
+            .left_bracket => {
+                const open_bracket = try self.eatToken(.left_bracket);
+
+                if (self.peekTokenTag() == .right_bracket) {
+                    node = .nil;
+                } else {
+                    node = try self.parseExpression(.{});
+                }
+
+                switch (lhs.tag) {
+                    .expression_identifier,
+                    => {
+                        const identifier_data: Ast.Node.Identifier = self.node_heap.getNodePtrConst(.expression_identifier, lhs.index).*;
+
+                        var sub_node = try self.reserveNode(.expression_binary_array_access);
+
+                        try self.nodeSetData(&sub_node, .expression_binary_array_access, .{
+                            .op_token = identifier_data.token,
+                            .left = lhs,
+                            .right = node,
+                        });
+
+                        node = sub_node;
+                    },
+                    else => {},
+                }
+
+                if (open_bracket) |_| {
+                    _ = try self.eatToken(.right_bracket);
+                }
+            },
             inline else => |tag| {
                 const op_token: Ast.TokenIndex = self.peekToken();
 
@@ -676,16 +729,16 @@ pub fn parseExpression(
                         });
 
                         node = sub_node;
+
+                        // switch (tag) {
+                        // .left_bracket => {
+                        // _ = try self.expectToken(.right_bracket);
+                        // },
+                        // else => {},
+                        // }
                     }
                 } else {
                     break;
-                }
-
-                switch (tag) {
-                    .left_bracket => {
-                        _ = try self.eatToken(.right_bracket);
-                    },
-                    else => {},
                 }
             },
         }
