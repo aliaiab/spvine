@@ -249,6 +249,12 @@ pub const Error = struct {
             array_length: u32,
             index: i32,
         },
+        no_field_in_struct: struct {
+            struct_type: Sema.TypeIndex,
+        },
+        cannot_perform_field_access: struct {
+            type_index: Sema.TypeIndex,
+        },
     } = .{ .none = {} },
 
     pub const Tag = enum(u8) {
@@ -273,6 +279,8 @@ pub const Error = struct {
         cannot_perform_field_access,
         expression_not_indexable,
         array_access_out_of_bounds,
+        expected_constant_expression,
+        no_field_in_struct,
     };
 };
 

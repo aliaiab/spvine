@@ -43,7 +43,7 @@ pub fn main() !void {
     }
 
     if (ast.errors.len != 0) {
-        glsl.error_render.printErrors(test_glsl_path, ast, null, ast.errors, stderr);
+        try glsl.error_render.printErrors(test_glsl_path, ast, null, ast.errors, stderr);
 
         return;
     }
@@ -79,7 +79,7 @@ pub fn main() !void {
     _ = spirv_air; // autofix
 
     if (errors.len != 0) {
-        glsl.error_render.printErrors(test_glsl_path, ast, &sema, errors, stderr);
+        try glsl.error_render.printErrors(test_glsl_path, ast, &sema, errors, stderr);
 
         return;
     }
