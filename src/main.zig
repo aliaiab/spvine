@@ -5,12 +5,24 @@ pub const x86_64 = @import("x86_64.zig");
 pub fn main() !void {
     var test_glsl_path: []const u8 = "src/test.glsl";
 
+    var optimization_flags: spirv.Ir.OptimizationFlags = .{};
+
     {
         var args = std.process.args();
 
         _ = args.skip();
 
         test_glsl_path = args.next() orelse test_glsl_path;
+
+        while (args.next()) |opt_flag| {
+            if (std.mem.eql(u8, opt_flag, "-const_fold")) {
+                optimization_flags.enable_constant_folding = true;
+            }
+
+            if (std.mem.eql(u8, opt_flag, "-const_hoist")) {
+                optimization_flags.enable_constant_hoisting = true;
+            }
+        }
     }
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -73,6 +85,11 @@ pub fn main() !void {
         .gpa = allocator,
     };
     defer sema.deinit(allocator);
+
+    //Based on the generally correct assumption that the maximum emitted spirv instructions are roughly proportional to the number of ast nodes
+    try sema.spirv_ir.node_buffer.ensureTotalCapacity(allocator, ast.node_heap.allocated_size);
+
+    sema.spirv_ir.optimization_flags = optimization_flags;
 
     const errors = try sema.analyse(ast, allocator);
     defer allocator.free(errors);
