@@ -100,11 +100,16 @@ pub fn main() !void {
         return;
     }
 
-    try sema.spirv_ir.computeGlobalOrdering(&sema.spirv_ir.node_list, allocator);
+    var schedule_context: spirv.Ir.OrderScheduleContext = .{
+        .allocator = allocator,
+    };
+    defer schedule_context.deinit(allocator);
+
+    try sema.spirv_ir.computeGlobalOrdering(&schedule_context, allocator);
 
     try stderr.print("spirv.Ir:\n\n", .{});
 
-    try sema.spirv_ir.printNodes(stderr);
+    try sema.spirv_ir.printNodes(stderr, schedule_context);
 }
 
 fn printAst(
