@@ -1,4 +1,4 @@
-//! Implements the semantic analysis stage of the frontend
+//! Implements the semantic analysis stage of the glsl frontend
 
 gpa: std.mem.Allocator,
 scope_stack: std.ArrayList(struct {
@@ -10,89 +10,7 @@ types: std.ArrayList(Type) = .{},
 type_map: token_map.Map(TypeIndex) = .{},
 spirv_ir: spirv.Ir = .{},
 spirv_ir_type_map: std.AutoArrayHashMapUnmanaged(TypeIndex, spirv.Ir.Node) = .{},
-
 errors: std.ArrayList(Ast.Error) = .{},
-
-///Points to a specific overload of a wider function name
-pub const ProcedureIndex = enum(u32) { _ };
-
-pub const ProcedureOverloads = struct {
-    return_type: TypeIndex,
-    parameter_qualifiers: []const ValueQualifier,
-    //The range of parameter counts across overloads
-    min_parameter_count: u32,
-    max_parameter_count: u32,
-    overloads: std.ArrayHashMapUnmanaged([]const TypeIndex, ProcedureIndex, TypeSignatureMapContext, true),
-};
-
-pub const Procedure = struct {
-    general_data: *ProcedureOverloads,
-    parameter_types: []const TypeIndex,
-    body_defined: bool,
-};
-
-pub const TypeSignatureMapContext = struct {
-    pub fn eql(_: @This(), a: []const TypeIndex, b: []const TypeIndex, b_index: usize) bool {
-        _ = b_index; // autofix
-        if (a.len != b.len) return false;
-
-        for (a, b) |type_a, type_b| {
-            if (type_a != type_b) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    pub fn hash(_: @This(), a: []const TypeIndex) u32 {
-        const a_as_bytes: []const u8 = @ptrCast(a);
-
-        return std.hash.XxHash32.hash(0, a_as_bytes);
-    }
-};
-
-pub const IdentifierDefinition = struct {
-    token_index: Ast.TokenIndex,
-    type_index: TypeIndex,
-    qualifier: ValueQualifier,
-    initial_value: ?u64,
-    ir_node: spirv.Ir.Node,
-};
-
-pub const ValueQualifier = enum {
-    constant,
-    in,
-    inout,
-    out,
-};
-
-pub fn deinit(
-    self: *Sema,
-    allocator: std.mem.Allocator,
-) void {
-    for (self.scope_stack.items) |*scope| {
-        scope.identifiers.deinit(allocator);
-    }
-
-    self.scope_stack.deinit(allocator);
-    self.types.deinit(allocator);
-    self.errors.deinit(allocator);
-
-    self.* = undefined;
-}
-
-pub const Type = union(enum) {
-    @"struct": struct {
-        name: Ast.TokenIndex,
-        fields: token_map.Map(StructField),
-    },
-
-    pub const StructField = struct {
-        type_index: TypeIndex,
-        node: Ast.NodeIndex,
-    };
-};
 
 ///Analyse the root node of the ast
 pub fn analyse(sema: *Sema, ast: Ast, allocator: std.mem.Allocator) ![]Ast.Error {
@@ -1528,6 +1446,205 @@ pub fn printTypeName(self: Sema, ast: Ast, writer: *std.Io.Writer, type_index: T
     }
 }
 
+pub fn lowerOperatorAdd(
+    self: *Sema,
+    op_type: TypeIndex,
+    lhs: AnalyseExpressionResult,
+    rhs: AnalyseExpressionResult,
+) !spirv.Ir.Node {
+    const result_type = try self.lowerType(op_type);
+
+    const lhs_node = try self.lowerTypeConversion(op_type, lhs.type_index, lhs.ir_node);
+    const rhs_node = try self.lowerTypeConversion(op_type, rhs.type_index, rhs.ir_node);
+
+    switch (op_type.toData().scalar_type) {
+        .double, .float => {
+            return self.spirv_ir.buildNodeOpFAdd(self.gpa, result_type, lhs_node, rhs_node);
+        },
+        .integer => {
+            return self.spirv_ir.buildNodeOpIAdd(self.gpa, result_type, lhs_node, rhs_node);
+        },
+        else => unreachable,
+    }
+}
+
+pub fn lowerOperatorSub(
+    self: *Sema,
+    op_type: TypeIndex,
+    lhs: AnalyseExpressionResult,
+    rhs: AnalyseExpressionResult,
+) !spirv.Ir.Node {
+    const result_type = try self.lowerType(op_type);
+
+    const lhs_node = try self.lowerTypeConversion(op_type, lhs.type_index, lhs.ir_node);
+    const rhs_node = try self.lowerTypeConversion(op_type, rhs.type_index, rhs.ir_node);
+
+    switch (op_type.toData().scalar_type) {
+        .double, .float => {
+            return self.spirv_ir.buildNodeOpFSub(self.gpa, result_type, lhs_node, rhs_node);
+        },
+        .integer => {
+            return self.spirv_ir.buildNodeOpISub(self.gpa, result_type, lhs_node, rhs_node);
+        },
+        else => unreachable,
+    }
+}
+
+pub fn lowerOperatorMul(
+    self: *Sema,
+    op_type: TypeIndex,
+    lhs: AnalyseExpressionResult,
+    rhs: AnalyseExpressionResult,
+) !spirv.Ir.Node {
+    const result_type = try self.lowerType(op_type);
+
+    const lhs_node = try self.lowerTypeConversion(op_type, lhs.type_index, lhs.ir_node);
+    const rhs_node = try self.lowerTypeConversion(op_type, rhs.type_index, rhs.ir_node);
+
+    switch (op_type.toData().scalar_type) {
+        .double, .float => {
+            return self.spirv_ir.buildNodeOpFMul(self.gpa, result_type, lhs_node, rhs_node);
+        },
+        .integer => {
+            return self.spirv_ir.buildNodeOpIMul(self.gpa, result_type, lhs_node, rhs_node);
+        },
+        else => unreachable,
+    }
+}
+
+pub fn lowerTypeConversion(
+    self: *Sema,
+    to_type: TypeIndex,
+    from_type: TypeIndex,
+    ir_node: spirv.Ir.Node,
+) !spirv.Ir.Node {
+    if (to_type == from_type) {
+        return ir_node;
+    }
+
+    const result_type = try self.lowerType(to_type);
+
+    if (to_type.toData().scalar_type == .float and
+        from_type.toData().scalar_type == .integer)
+    {
+        return try self.spirv_ir.buildNodeOpConvertSToF(self.gpa, result_type, ir_node);
+    }
+
+    return ir_node;
+}
+
+pub fn lowerType(self: *Sema, type_index: TypeIndex) !spirv.Ir.Node {
+    if (self.spirv_ir_type_map.get(type_index)) |cached_node| {
+        return cached_node;
+    }
+
+    if (type_index.toArrayIndex() != null) {
+        @panic("unimplemented: Lowering of composite types not yet supported!");
+    }
+
+    const ir_type: spirv.Ir.Node = ir_type: switch (type_index.toData().scalar_type) {
+        .integer => {
+            break :ir_type try self.spirv_ir.buildNode(self.gpa, .type_int, spirv.Ir.Node.TypeInt, .{
+                .signedness = .signed,
+                .bit_width = 32,
+                .range_value_min = std.math.minInt(u32),
+                .range_value_max = std.math.minInt(u32),
+            });
+        },
+        .float => {
+            break :ir_type try self.spirv_ir.buildNode(self.gpa, .type_float, spirv.Ir.Node.TypeFloat, .{
+                .bit_width = 32,
+            });
+        },
+        else => unreachable,
+    };
+
+    try self.spirv_ir_type_map.put(self.gpa, type_index, ir_type);
+
+    return ir_type;
+}
+
+pub fn deinit(
+    self: *Sema,
+    allocator: std.mem.Allocator,
+) void {
+    for (self.scope_stack.items) |*scope| {
+        scope.identifiers.deinit(allocator);
+    }
+
+    self.scope_stack.deinit(allocator);
+    self.types.deinit(allocator);
+    self.errors.deinit(allocator);
+
+    self.* = undefined;
+}
+
+///Points to a specific overload of a wider function name
+pub const ProcedureIndex = enum(u32) { _ };
+
+pub const ProcedureOverloads = struct {
+    return_type: TypeIndex,
+    parameter_qualifiers: []const ValueQualifier,
+    //The range of parameter counts across overloads
+    min_parameter_count: u32,
+    max_parameter_count: u32,
+    overloads: std.ArrayHashMapUnmanaged([]const TypeIndex, ProcedureIndex, TypeSignatureMapContext, true),
+};
+
+pub const Procedure = struct {
+    general_data: *ProcedureOverloads,
+    parameter_types: []const TypeIndex,
+    body_defined: bool,
+};
+
+pub const TypeSignatureMapContext = struct {
+    pub fn eql(_: @This(), a: []const TypeIndex, b: []const TypeIndex, b_index: usize) bool {
+        _ = b_index; // autofix
+        if (a.len != b.len) return false;
+
+        for (a, b) |type_a, type_b| {
+            if (type_a != type_b) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    pub fn hash(_: @This(), a: []const TypeIndex) u32 {
+        const a_as_bytes: []const u8 = @ptrCast(a);
+
+        return std.hash.XxHash32.hash(0, a_as_bytes);
+    }
+};
+
+pub const IdentifierDefinition = struct {
+    token_index: Ast.TokenIndex,
+    type_index: TypeIndex,
+    qualifier: ValueQualifier,
+    initial_value: ?u64,
+    ir_node: spirv.Ir.Node,
+};
+
+pub const ValueQualifier = enum {
+    constant,
+    in,
+    inout,
+    out,
+};
+
+pub const Type = union(enum) {
+    @"struct": struct {
+        name: Ast.TokenIndex,
+        fields: token_map.Map(StructField),
+    },
+
+    pub const StructField = struct {
+        type_index: TypeIndex,
+        node: Ast.NodeIndex,
+    };
+};
+
 pub const TypeIndex = enum(u64) {
     ///Used for tagging erroring types such that we don't contaminate future error messages with bad error checking
     null = 0,
@@ -2000,124 +2117,6 @@ pub const TypeIndex = enum(u64) {
         };
     };
 };
-
-pub fn lowerOperatorAdd(
-    self: *Sema,
-    op_type: TypeIndex,
-    lhs: AnalyseExpressionResult,
-    rhs: AnalyseExpressionResult,
-) !spirv.Ir.Node {
-    const result_type = try self.lowerType(op_type);
-
-    const lhs_node = try self.lowerTypeConversion(op_type, lhs.type_index, lhs.ir_node);
-    const rhs_node = try self.lowerTypeConversion(op_type, rhs.type_index, rhs.ir_node);
-
-    switch (op_type.toData().scalar_type) {
-        .double, .float => {
-            return self.spirv_ir.buildNodeOpFAdd(self.gpa, result_type, lhs_node, rhs_node);
-        },
-        .integer => {
-            return self.spirv_ir.buildNodeOpIAdd(self.gpa, result_type, lhs_node, rhs_node);
-        },
-        else => unreachable,
-    }
-}
-
-pub fn lowerOperatorSub(
-    self: *Sema,
-    op_type: TypeIndex,
-    lhs: AnalyseExpressionResult,
-    rhs: AnalyseExpressionResult,
-) !spirv.Ir.Node {
-    const result_type = try self.lowerType(op_type);
-
-    const lhs_node = try self.lowerTypeConversion(op_type, lhs.type_index, lhs.ir_node);
-    const rhs_node = try self.lowerTypeConversion(op_type, rhs.type_index, rhs.ir_node);
-
-    switch (op_type.toData().scalar_type) {
-        .double, .float => {
-            return self.spirv_ir.buildNodeOpFSub(self.gpa, result_type, lhs_node, rhs_node);
-        },
-        .integer => {
-            return self.spirv_ir.buildNodeOpISub(self.gpa, result_type, lhs_node, rhs_node);
-        },
-        else => unreachable,
-    }
-}
-
-pub fn lowerOperatorMul(
-    self: *Sema,
-    op_type: TypeIndex,
-    lhs: AnalyseExpressionResult,
-    rhs: AnalyseExpressionResult,
-) !spirv.Ir.Node {
-    const result_type = try self.lowerType(op_type);
-
-    const lhs_node = try self.lowerTypeConversion(op_type, lhs.type_index, lhs.ir_node);
-    const rhs_node = try self.lowerTypeConversion(op_type, rhs.type_index, rhs.ir_node);
-
-    switch (op_type.toData().scalar_type) {
-        .double, .float => {
-            return self.spirv_ir.buildNodeOpFMul(self.gpa, result_type, lhs_node, rhs_node);
-        },
-        .integer => {
-            return self.spirv_ir.buildNodeOpIMul(self.gpa, result_type, lhs_node, rhs_node);
-        },
-        else => unreachable,
-    }
-}
-
-pub fn lowerTypeConversion(
-    self: *Sema,
-    to_type: TypeIndex,
-    from_type: TypeIndex,
-    ir_node: spirv.Ir.Node,
-) !spirv.Ir.Node {
-    if (to_type == from_type) {
-        return ir_node;
-    }
-
-    const result_type = try self.lowerType(to_type);
-
-    if (to_type.toData().scalar_type == .float and
-        from_type.toData().scalar_type == .integer)
-    {
-        return try self.spirv_ir.buildNodeOpConvertSToF(self.gpa, result_type, ir_node);
-    }
-
-    return ir_node;
-}
-
-pub fn lowerType(self: *Sema, type_index: TypeIndex) !spirv.Ir.Node {
-    if (self.spirv_ir_type_map.get(type_index)) |cached_node| {
-        return cached_node;
-    }
-
-    if (type_index.toArrayIndex() != null) {
-        @panic("unimplemented: Lowering of composite types not yet supported!");
-    }
-
-    const ir_type: spirv.Ir.Node = ir_type: switch (type_index.toData().scalar_type) {
-        .integer => {
-            break :ir_type try self.spirv_ir.buildNode(self.gpa, .type_int, spirv.Ir.Node.TypeInt, .{
-                .signedness = .signed,
-                .bit_width = 32,
-                .range_value_min = std.math.minInt(u32),
-                .range_value_max = std.math.minInt(u32),
-            });
-        },
-        .float => {
-            break :ir_type try self.spirv_ir.buildNode(self.gpa, .type_float, spirv.Ir.Node.TypeFloat, .{
-                .bit_width = 32,
-            });
-        },
-        else => unreachable,
-    };
-
-    try self.spirv_ir_type_map.put(self.gpa, type_index, ir_type);
-
-    return ir_type;
-}
 
 const std = @import("std");
 const Ast = @import("Ast.zig");
