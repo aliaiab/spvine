@@ -1,4 +1,4 @@
-//! Implements the syntactic analysis stage of the frontend
+//! Implements the syntactic analysis stage of the glsl frontend
 
 gpa: std.mem.Allocator,
 source: []const u8,

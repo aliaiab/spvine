@@ -8,11 +8,11 @@ errors: []const Error,
 root_decls: []const NodeIndex,
 
 pub fn deinit(self: *Ast, allocator: std.mem.Allocator) void {
-    defer self.* = undefined;
-    defer allocator.free(self.errors);
-    defer self.defines.deinit(allocator);
-    defer allocator.free(self.root_decls);
-    defer self.node_heap.deinit(allocator);
+    self.node_heap.deinit(allocator);
+    allocator.free(self.root_decls);
+    self.defines.deinit(allocator);
+    allocator.free(self.errors);
+    self.* = undefined;
 }
 
 pub fn parse(

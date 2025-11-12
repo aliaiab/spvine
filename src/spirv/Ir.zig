@@ -96,7 +96,8 @@ pub fn buildNodeOpIAdd(
         }
     }
 
-    const result_node = try ir.buildNode(allocator, .iadd, Node.IAdd, .{
+    const result_node = try ir.buildNode(allocator, .iadd, Node.MathsBinaryOp, .{
+        .tag = .iadd,
         .type = result_type,
         .lhs = lhs,
         .rhs = rhs,
@@ -129,7 +130,8 @@ pub fn buildNodeOpISub(
         }
     }
 
-    const result_node = try ir.buildNode(allocator, .isub, Node.IAdd, .{
+    const result_node = try ir.buildNode(allocator, .isub, Node.MathsBinaryOp, .{
+        .tag = .isub,
         .type = result_type,
         .lhs = lhs,
         .rhs = rhs,
@@ -145,7 +147,8 @@ pub fn buildNodeOpIMul(
     lhs: Node,
     rhs: Node,
 ) !Node {
-    const result_node = try ir.buildNode(allocator, .imul, Node.IAdd, .{
+    const result_node = try ir.buildNode(allocator, .imul, Node.MathsBinaryOp, .{
+        .tag = .imul,
         .type = result_type,
         .lhs = lhs,
         .rhs = rhs,
@@ -503,7 +506,7 @@ pub fn computeGlobalOrderingForNode(
             .fmul,
             .fsub,
             => {
-                const instruction = ir.nodeData(node, Node.IAdd);
+                const instruction = ir.nodeData(node, Node.MathsBinaryOp);
 
                 _ = try schedule_context.scheduleNodeStart(instruction.type) orelse continue;
                 _ = try schedule_context.scheduleNodeStart(instruction.lhs) orelse continue;
@@ -612,9 +615,9 @@ pub const Node = packed struct(u32) {
         constant: Constant,
         load: Load,
         variable: Variable,
-        iadd: IAdd,
-        isub: IAdd,
-        imul: IAdd,
+        iadd: MathsBinaryOp,
+        isub: MathsBinaryOp,
+        imul: MathsBinaryOp,
         convert_s_to_f: ConvertSToF,
         fadd: FAdd,
         fsub: FSub,
@@ -671,8 +674,8 @@ pub const Node = packed struct(u32) {
         storage_class: spirv.StorageClass,
     };
 
-    pub const IAdd = struct {
-        tag: Tag = .iadd,
+    pub const MathsBinaryOp = struct {
+        tag: Tag,
         type: Node,
         lhs: Node,
         rhs: Node,
@@ -789,7 +792,7 @@ pub fn printNodes(
             .fsub,
             .fmul,
             => |node_tag| {
-                const instruction = ir.nodeData(node, Node.IAdd);
+                const instruction = ir.nodeData(node, Node.MathsBinaryOp);
 
                 try writer.print("op_{s}: ", .{@tagName(node_tag)});
 
