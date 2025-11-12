@@ -259,7 +259,7 @@ pub fn analyseProcedure(
             else => unreachable,
         };
 
-        const ir_type = try self.lowerTypeToSpirvType(param_type);
+        const ir_type = try self.lowerType(param_type);
 
         const ir_ptr_type = try self.spirv_ir.buildNode(
             self.gpa,
@@ -273,7 +273,7 @@ pub fn analyseProcedure(
 
         const ir_param_ptr = try self.spirv_ir.buildNodeOpVariable(
             self.gpa,
-            ir_type,
+            ir_ptr_type,
             .Function,
             .nil,
         );
@@ -419,13 +419,11 @@ pub fn analyseStatement(
                     initial_value = try self.resolveConstantExpression(ast, var_init.expression);
                 }
 
-                if (expression_result.type_index != coerced_type and expression_result.type_index.toData().scalar_type == .integer) {
-                    ir_node = try self.spirv_ir.buildNodeOpConvertSToF(
-                        self.gpa,
-                        try self.lowerTypeToSpirvType(type_index),
-                        expression_result.ir_node,
-                    );
-                }
+                ir_node = try self.lowerTypeConversion(
+                    coerced_type,
+                    expression_result.type_index,
+                    expression_result.ir_node,
+                );
             }
 
             try self.scopeDefine(
@@ -500,7 +498,7 @@ pub fn analyseStatement(
                 expr_node = expr_result.ir_node;
             }
 
-            _ = switch (coerceTypeAssign(procedure.general_data.return_type, expr_type)) {
+            const coerced_type = switch (coerceTypeAssign(procedure.general_data.return_type, expr_type)) {
                 .null => {
                     try self.errors.append(self.gpa, .{
                         .tag = .type_mismatch,
@@ -521,6 +519,8 @@ pub fn analyseStatement(
                 },
                 else => |res| res,
             };
+
+            expr_node = try self.lowerTypeConversion(coerced_type, expr_type, expr_node);
 
             _ = try self.spirv_ir.buildNode(self.gpa, .return_value, spirv.Ir.Node.ReturnValue, .{
                 .return_value = expr_node,
@@ -910,7 +910,7 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
             //TODO: optimize this by using a custom parse function which just determines type
             if (std.fmt.parseInt(u64, ast.tokenString(number_literal_data.token), 10)) |int_value| {
                 const ir_node = try self.spirv_ir.buildNodeOpConstant(self.gpa, .{
-                    .type = try self.lowerTypeToSpirvType(.literal_uint),
+                    .type = try self.lowerType(.literal_uint),
                     .value_bits = @truncate(int_value),
                 });
 
@@ -928,7 +928,7 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
                 const value: u64 = @bitCast(int_value);
 
                 const ir_node = try self.spirv_ir.buildNodeOpConstant(self.gpa, .{
-                    .type = try self.lowerTypeToSpirvType(.literal_int),
+                    .type = try self.lowerType(.literal_int),
                     .value_bits = @truncate(value),
                 });
 
@@ -946,7 +946,7 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
                 const f32_val: f32 = @floatCast(float_value);
 
                 const ir_node = try self.spirv_ir.buildNodeOpConstant(self.gpa, .{
-                    .type = try self.lowerTypeToSpirvType(.literal_float),
+                    .type = try self.lowerType(.literal_float),
                     .value_bits = @bitCast(f32_val),
                 });
 
@@ -1022,55 +1022,13 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
         => {
             const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_add);
 
-            var lhs_type = try self.analyseExpression(ast, binary_expr.left);
-            var rhs_type = try self.analyseExpression(ast, binary_expr.right);
+            const lhs = try self.analyseExpression(ast, binary_expr.left);
+            const rhs = try self.analyseExpression(ast, binary_expr.right);
 
             const coerced_type: TypeIndex = switch (expression.tag) {
-                .expression_binary_mul, .expression_binary_div => coerceTypeMul(lhs_type.type_index, rhs_type.type_index),
-                else => coerceType(lhs_type.type_index, rhs_type.type_index),
+                .expression_binary_mul, .expression_binary_div => coerceTypeMul(lhs.type_index, rhs.type_index),
+                else => coerceType(lhs.type_index, rhs.type_index),
             };
-
-            var ir_node: spirv.Ir.Node = .nil;
-            const ir_type = try self.lowerTypeToSpirvType(coerced_type);
-
-            if (lhs_type.type_index != coerced_type and lhs_type.type_index.toData().scalar_type == .integer) {
-                lhs_type.ir_node = try self.spirv_ir.buildNodeOpConvertSToF(self.gpa, ir_type, lhs_type.ir_node);
-            }
-
-            if (rhs_type.type_index != coerced_type and rhs_type.type_index.toData().scalar_type == .integer) {
-                rhs_type.ir_node = try self.spirv_ir.buildNodeOpConvertSToF(self.gpa, ir_type, rhs_type.ir_node);
-            }
-
-            switch (expression.tag) {
-                .expression_binary_add => {
-                    switch (coerced_type.toData().scalar_type) {
-                        .float, .double => {
-                            ir_node = try self.spirv_ir.buildNodeOpFAdd(
-                                self.gpa,
-                                ir_type,
-                                lhs_type.ir_node,
-                                rhs_type.ir_node,
-                            );
-                        },
-                        .integer => {
-                            ir_node = try self.spirv_ir.buildNodeOpIAdd(
-                                self.gpa,
-                                ir_type,
-                                lhs_type.ir_node,
-                                rhs_type.ir_node,
-                            );
-                        },
-                        else => unreachable,
-                    }
-                },
-                .expression_binary_sub => {
-                    ir_node = try self.spirv_ir.buildNodeOpFSub(self.gpa, ir_type, lhs_type.ir_node, rhs_type.ir_node);
-                },
-                .expression_binary_mul => {
-                    ir_node = try self.spirv_ir.buildNodeOpFMul(self.gpa, ir_type, lhs_type.ir_node, rhs_type.ir_node);
-                },
-                else => {},
-            }
 
             const resultant_type = switch (coerced_type) {
                 .null => {
@@ -1079,8 +1037,8 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
                         .anchor = .{ .node = expression },
                         .data = .{
                             .type_mismatch = .{
-                                .lhs_type = lhs_type.type_index,
-                                .rhs_type = rhs_type.type_index,
+                                .lhs_type = lhs.type_index,
+                                .rhs_type = rhs.type_index,
                             },
                         },
                     });
@@ -1096,13 +1054,28 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
                     .anchor = .{ .node = expression },
                     .data = .{
                         .type_incompatibility = .{
-                            .lhs_type = lhs_type.type_index,
-                            .rhs_type = rhs_type.type_index,
+                            .lhs_type = lhs.type_index,
+                            .rhs_type = rhs.type_index,
                         },
                     },
                 });
 
                 return error.TypeIncompatibilty;
+            }
+
+            var ir_node: spirv.Ir.Node = .nil;
+
+            switch (expression.tag) {
+                .expression_binary_add => {
+                    ir_node = try self.lowerOperatorAdd(coerced_type, lhs, rhs);
+                },
+                .expression_binary_sub => {
+                    ir_node = try self.lowerOperatorSub(coerced_type, lhs, rhs);
+                },
+                .expression_binary_mul => {
+                    ir_node = try self.lowerOperatorMul(coerced_type, lhs, rhs);
+                },
+                else => unreachable,
             }
 
             return .{
@@ -1120,8 +1093,8 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
         => {
             const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_add);
 
-            var lhs_type = try self.analyseExpression(ast, binary_expr.left);
-            var rhs_type = try self.analyseExpression(ast, binary_expr.right);
+            const lhs_type = try self.analyseExpression(ast, binary_expr.left);
+            const rhs_type = try self.analyseExpression(ast, binary_expr.right);
 
             const assignable = try self.isExpressionAssignable(ast, binary_expr.left);
 
@@ -1168,30 +1141,21 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
             }
 
             var ir_node: spirv.Ir.Node = .nil;
-            const ir_type = try self.lowerTypeToSpirvType(resultant_type);
-
-            if (lhs_type.type_index != resultant_type and lhs_type.type_index.toData().scalar_type == .integer) {
-                lhs_type.ir_node = try self.spirv_ir.buildNodeOpConvertSToF(self.gpa, ir_type, lhs_type.ir_node);
-            }
-
-            if (rhs_type.type_index != resultant_type and rhs_type.type_index.toData().scalar_type == .integer) {
-                rhs_type.ir_node = try self.spirv_ir.buildNodeOpConvertSToF(self.gpa, ir_type, rhs_type.ir_node);
-            }
 
             switch (expression.tag) {
                 .expression_binary_assign => {
                     ir_node = rhs_type.ir_node;
                 },
                 .expression_binary_assign_add => {
-                    ir_node = try self.spirv_ir.buildNodeOpFAdd(self.gpa, ir_type, lhs_type.ir_node, rhs_type.ir_node);
+                    ir_node = try self.lowerOperatorAdd(resultant_type, lhs_type, rhs_type);
                 },
                 .expression_binary_assign_sub => {
-                    ir_node = try self.spirv_ir.buildNodeOpFSub(self.gpa, ir_type, lhs_type.ir_node, rhs_type.ir_node);
+                    ir_node = try self.lowerOperatorSub(resultant_type, lhs_type, rhs_type);
                 },
                 .expression_binary_assign_mul => {
-                    ir_node = try self.spirv_ir.buildNodeOpFMul(self.gpa, ir_type, lhs_type.ir_node, rhs_type.ir_node);
+                    ir_node = try self.lowerOperatorMul(resultant_type, lhs_type, rhs_type);
                 },
-                else => {},
+                else => unreachable,
             }
 
             switch (binary_expr.left.tag) {
@@ -1232,7 +1196,7 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
 
             const ir_node = try self.spirv_ir.buildNodeOpFNegate(
                 self.gpa,
-                try self.lowerTypeToSpirvType(rhs_type.type_index),
+                try self.lowerType(rhs_type.type_index),
                 rhs_type.ir_node,
             );
 
@@ -2037,7 +2001,94 @@ pub const TypeIndex = enum(u64) {
     };
 };
 
-pub fn lowerTypeToSpirvType(self: *Sema, type_index: TypeIndex) !spirv.Ir.Node {
+pub fn lowerOperatorAdd(
+    self: *Sema,
+    op_type: TypeIndex,
+    lhs: AnalyseExpressionResult,
+    rhs: AnalyseExpressionResult,
+) !spirv.Ir.Node {
+    const result_type = try self.lowerType(op_type);
+
+    const lhs_node = try self.lowerTypeConversion(op_type, lhs.type_index, lhs.ir_node);
+    const rhs_node = try self.lowerTypeConversion(op_type, rhs.type_index, rhs.ir_node);
+
+    switch (op_type.toData().scalar_type) {
+        .double, .float => {
+            return self.spirv_ir.buildNodeOpFAdd(self.gpa, result_type, lhs_node, rhs_node);
+        },
+        .integer => {
+            return self.spirv_ir.buildNodeOpIAdd(self.gpa, result_type, lhs_node, rhs_node);
+        },
+        else => unreachable,
+    }
+}
+
+pub fn lowerOperatorSub(
+    self: *Sema,
+    op_type: TypeIndex,
+    lhs: AnalyseExpressionResult,
+    rhs: AnalyseExpressionResult,
+) !spirv.Ir.Node {
+    const result_type = try self.lowerType(op_type);
+
+    const lhs_node = try self.lowerTypeConversion(op_type, lhs.type_index, lhs.ir_node);
+    const rhs_node = try self.lowerTypeConversion(op_type, rhs.type_index, rhs.ir_node);
+
+    switch (op_type.toData().scalar_type) {
+        .double, .float => {
+            return self.spirv_ir.buildNodeOpFSub(self.gpa, result_type, lhs_node, rhs_node);
+        },
+        .integer => {
+            return self.spirv_ir.buildNodeOpISub(self.gpa, result_type, lhs_node, rhs_node);
+        },
+        else => unreachable,
+    }
+}
+
+pub fn lowerOperatorMul(
+    self: *Sema,
+    op_type: TypeIndex,
+    lhs: AnalyseExpressionResult,
+    rhs: AnalyseExpressionResult,
+) !spirv.Ir.Node {
+    const result_type = try self.lowerType(op_type);
+
+    const lhs_node = try self.lowerTypeConversion(op_type, lhs.type_index, lhs.ir_node);
+    const rhs_node = try self.lowerTypeConversion(op_type, rhs.type_index, rhs.ir_node);
+
+    switch (op_type.toData().scalar_type) {
+        .double, .float => {
+            return self.spirv_ir.buildNodeOpFMul(self.gpa, result_type, lhs_node, rhs_node);
+        },
+        .integer => {
+            return self.spirv_ir.buildNodeOpIMul(self.gpa, result_type, lhs_node, rhs_node);
+        },
+        else => unreachable,
+    }
+}
+
+pub fn lowerTypeConversion(
+    self: *Sema,
+    to_type: TypeIndex,
+    from_type: TypeIndex,
+    ir_node: spirv.Ir.Node,
+) !spirv.Ir.Node {
+    if (to_type == from_type) {
+        return ir_node;
+    }
+
+    const result_type = try self.lowerType(to_type);
+
+    if (to_type.toData().scalar_type == .float and
+        from_type.toData().scalar_type == .integer)
+    {
+        return try self.spirv_ir.buildNodeOpConvertSToF(self.gpa, result_type, ir_node);
+    }
+
+    return ir_node;
+}
+
+pub fn lowerType(self: *Sema, type_index: TypeIndex) !spirv.Ir.Node {
     if (self.spirv_ir_type_map.get(type_index)) |cached_node| {
         return cached_node;
     }

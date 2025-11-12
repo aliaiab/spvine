@@ -3,8 +3,6 @@
 node_buffer: std.ArrayList(u32) = .{},
 effect_nodes: std.ArrayList(Node) = .{},
 node_list: std.ArrayList(Node) = .{},
-types: std.AutoArrayHashMapUnmanaged(Node, void) = .{},
-constants: std.AutoArrayHashMapUnmanaged(Node.Constant, Node) = .{},
 node_dedup_map: std.StringArrayHashMapUnmanaged(Node) = .{},
 node_scheduled_map: std.AutoArrayHashMapUnmanaged(Node, void) = .{},
 optimization_flags: OptimizationFlags = .{},
@@ -99,6 +97,55 @@ pub fn buildNodeOpIAdd(
     }
 
     const result_node = try ir.buildNode(allocator, .iadd, Node.IAdd, .{
+        .type = result_type,
+        .lhs = lhs,
+        .rhs = rhs,
+    });
+
+    return result_node;
+}
+
+pub fn buildNodeOpISub(
+    ir: *Ir,
+    allocator: std.mem.Allocator,
+    result_type: Node,
+    input_lhs: Node,
+    input_rhs: Node,
+) !Node {
+    const lhs = input_lhs;
+    const rhs = input_rhs;
+
+    if (ir.optimization_flags.enable_constant_folding) {
+        if (ir.nodeTag(lhs).* == .constant and ir.nodeTag(rhs).* == .constant) {
+            const lhs_value = ir.nodeData(lhs, Node.Constant);
+            const rhs_value = ir.nodeData(rhs, Node.Constant);
+
+            const addition = lhs_value.value(i32) - rhs_value.value(i32);
+
+            return try ir.buildNode(allocator, .constant, Node.Constant, .{
+                .type = lhs_value.type,
+                .value_bits = @bitCast(addition),
+            });
+        }
+    }
+
+    const result_node = try ir.buildNode(allocator, .isub, Node.IAdd, .{
+        .type = result_type,
+        .lhs = lhs,
+        .rhs = rhs,
+    });
+
+    return result_node;
+}
+
+pub fn buildNodeOpIMul(
+    ir: *Ir,
+    allocator: std.mem.Allocator,
+    result_type: Node,
+    lhs: Node,
+    rhs: Node,
+) !Node {
+    const result_node = try ir.buildNode(allocator, .imul, Node.IAdd, .{
         .type = result_type,
         .lhs = lhs,
         .rhs = rhs,
@@ -342,6 +389,7 @@ pub fn buildNode(
     const node: Node = .{ .offset = @intCast(node_offset) };
 
     ir.nodeData(node, T).* = node_data;
+    ir.nodeTag(node).* = node_tag;
 
     switch (node_tag) {
         .return_value => {
@@ -367,21 +415,25 @@ pub fn nodeData(ir: Ir, node: Node, comptime T: type) *T {
     return @ptrCast(@alignCast(ptr));
 }
 
+///Performs global code motion to determine structure total ordering
 pub fn computeGlobalOrdering(
     ir: *Ir,
-    ordering: *std.ArrayList(Node),
+    schedule_context: *OrderScheduleContext,
     allocator: std.mem.Allocator,
 ) !void {
     for (ir.effect_nodes.items) |effect_node| {
-        try ir.computeGlobalOrderingForNode(effect_node, ordering, allocator);
+        try ir.computeGlobalOrderingForNode(
+            effect_node,
+            schedule_context,
+            allocator,
+        );
     }
 }
 
-///Performs global code motion to determine structure total ordering
 pub fn computeGlobalOrderingForNode(
     ir: *Ir,
     root_node: Node,
-    ordering: *std.ArrayList(Node),
+    schedule_context: *OrderScheduleContext,
     allocator: std.mem.Allocator,
 ) !void {
     if (ir.node_scheduled_map.get(root_node)) |_| {
@@ -394,128 +446,137 @@ pub fn computeGlobalOrderingForNode(
         return;
     }
 
-    const OrderResult = struct {
-        node: Node,
-        //The value number/order for the node
-        order: u32,
-    };
+    _ = try schedule_context.scheduleNodeStart(root_node);
 
-    var order_stack: std.ArrayList(OrderResult) = .{};
-    defer order_stack.clearAndFree(allocator);
+    while (true) {
+        if (schedule_context.order_stack.items.len == 0) {
+            break;
+        }
 
-    switch (ir.nodeTag(root_node).*) {
-        .null,
-        .return_value,
-        => {
-            const return_value = ir.nodeData(root_node, Node.ReturnValue);
+        const node = schedule_context.order_stack.getLast().node;
 
-            try ir.computeGlobalOrderingForNode(return_value.return_value, ordering, allocator);
+        const node_tag: Node.Tag = if (node != Node.nil) ir.nodeTag(node).* else .null;
 
-            try ordering.append(allocator, root_node);
-        },
-        .type_int,
-        .type_float,
-        => {
-            try ordering.append(allocator, root_node);
-        },
-        .type_pointer => {
-            const instruction = ir.nodeData(root_node, Node.TypePointer);
+        switch (node_tag) {
+            .null => {},
+            .return_value,
+            => {
+                const return_value = ir.nodeData(node, Node.ReturnValue);
 
-            try ir.computeGlobalOrderingForNode(
-                instruction.type,
-                ordering,
-                allocator,
-            );
+                _ = try schedule_context.scheduleNodeStart(return_value.return_value) orelse continue;
+            },
+            .type_int,
+            .type_float,
+            => {},
+            .type_pointer => {
+                const instruction = ir.nodeData(node, Node.TypePointer);
 
-            try ordering.append(allocator, root_node);
-        },
-        .constant => {
-            const variable = ir.nodeData(root_node, Node.Constant);
+                _ = try schedule_context.scheduleNodeStart(instruction.type) orelse continue;
+            },
+            .constant => {
+                const variable = ir.nodeData(node, Node.Constant);
 
-            try ir.computeGlobalOrderingForNode(
-                variable.type,
-                ordering,
-                allocator,
-            );
+                _ = try schedule_context.scheduleNodeStart(variable.type) orelse continue;
+            },
+            .variable => {
+                const variable = ir.nodeData(node, Node.Variable);
 
-            try ordering.append(allocator, root_node);
-        },
-        .variable => {
-            const variable = ir.nodeData(root_node, Node.Variable);
+                _ = try schedule_context.scheduleNodeStart(variable.type) orelse continue;
+                _ = try schedule_context.scheduleNodeStart(variable.initializer) orelse continue;
+            },
+            .load => {
+                const instruction = ir.nodeData(node, Node.Load);
 
-            try ir.computeGlobalOrderingForNode(
-                variable.type,
-                ordering,
-                allocator,
-            );
+                _ = try schedule_context.scheduleNodeStart(instruction.result_type) orelse continue;
+                _ = try schedule_context.scheduleNodeStart(instruction.pointer) orelse continue;
+            },
+            .convert_s_to_f => {
+                const instruction = ir.nodeData(node, Node.ConvertSToF);
 
-            try ir.computeGlobalOrderingForNode(
-                variable.initializer,
-                ordering,
-                allocator,
-            );
+                _ = try schedule_context.scheduleNodeStart(instruction.type) orelse continue;
+                _ = try schedule_context.scheduleNodeStart(instruction.operand) orelse continue;
+            },
+            .iadd,
+            .isub,
+            .imul,
+            .fadd,
+            .fmul,
+            .fsub,
+            => {
+                const instruction = ir.nodeData(node, Node.IAdd);
 
-            try ordering.append(allocator, root_node);
-        },
-        .load => {
-            const instruction = ir.nodeData(root_node, Node.Load);
+                _ = try schedule_context.scheduleNodeStart(instruction.type) orelse continue;
+                _ = try schedule_context.scheduleNodeStart(instruction.lhs) orelse continue;
+                _ = try schedule_context.scheduleNodeStart(instruction.rhs) orelse continue;
+            },
+            .fnegate => {
+                const fnegate = ir.nodeData(node, Node.FNegate);
 
-            try ir.computeGlobalOrderingForNode(
-                instruction.pointer,
-                ordering,
-                allocator,
-            );
+                _ = try schedule_context.scheduleNodeStart(fnegate.type) orelse continue;
+                _ = try schedule_context.scheduleNodeStart(fnegate.operand) orelse continue;
+            },
+        }
 
-            try ordering.append(allocator, root_node);
-        },
-        .convert_s_to_f => {
-            const instruction = ir.nodeData(root_node, Node.ConvertSToF);
+        if (node_tag == .null) continue;
 
-            try ir.computeGlobalOrderingForNode(instruction.operand, ordering, allocator);
+        const order = try schedule_context.scheduleNodeFinish() orelse break;
+        _ = order; // autofix
 
-            try ordering.append(allocator, root_node);
-        },
-        .iadd => {
-            const fadd = ir.nodeData(root_node, Node.IAdd);
-
-            try ir.computeGlobalOrderingForNode(fadd.lhs, ordering, allocator);
-            try ir.computeGlobalOrderingForNode(fadd.rhs, ordering, allocator);
-
-            try ordering.append(allocator, root_node);
-        },
-        .fadd => {
-            const fadd = ir.nodeData(root_node, Node.FAdd);
-
-            try ir.computeGlobalOrderingForNode(fadd.lhs, ordering, allocator);
-            try ir.computeGlobalOrderingForNode(fadd.rhs, ordering, allocator);
-
-            try ordering.append(allocator, root_node);
-        },
-        .fsub => {
-            const fsub = ir.nodeData(root_node, Node.FSub);
-
-            try ir.computeGlobalOrderingForNode(fsub.lhs, ordering, allocator);
-            try ir.computeGlobalOrderingForNode(fsub.rhs, ordering, allocator);
-
-            try ordering.append(allocator, root_node);
-        },
-        .fmul => {
-            const fmul = ir.nodeData(root_node, Node.FAdd);
-
-            try ir.computeGlobalOrderingForNode(fmul.lhs, ordering, allocator);
-            try ir.computeGlobalOrderingForNode(fmul.rhs, ordering, allocator);
-
-            try ordering.append(allocator, root_node);
-        },
-        .fnegate => {
-            const fnegate = ir.nodeData(root_node, Node.FNegate);
-
-            try ir.computeGlobalOrderingForNode(fnegate.operand, ordering, allocator);
-
-            try ordering.append(allocator, root_node);
-        },
+        try ir.node_list.append(allocator, node);
     }
 }
+
+pub const OrderScheduleContext = struct {
+    allocator: std.mem.Allocator,
+    global_order: u32 = 0,
+    ///Maps from node -> order
+    order_stack: std.ArrayList(OrderResult) = .{},
+    scheduled_map: std.AutoArrayHashMapUnmanaged(Node, u32) = .{},
+
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        self.order_stack.clearAndFree(allocator);
+        self.scheduled_map.clearAndFree(allocator);
+    }
+
+    ///Schedules a node, returning it's order
+    pub fn scheduleNodeStart(
+        self: *@This(),
+        node: Node,
+    ) !?u32 {
+        if (node == Node.nil) {
+            //TODO: have some kind of null order
+            return std.math.maxInt(u32);
+        }
+
+        if (self.scheduled_map.get(node)) |order| {
+            return order;
+        }
+
+        const order_stack_entry = self.order_stack.addOne(self.allocator) catch @panic("oom");
+
+        order_stack_entry.node = node;
+
+        return null;
+    }
+
+    pub fn scheduleNodeFinish(
+        self: *@This(),
+    ) !?u32 {
+        const node = self.order_stack.pop() orelse return null;
+
+        const order = self.global_order;
+
+        self.global_order += 1;
+
+        try self.scheduled_map.put(self.allocator, node.node, order);
+
+        return order;
+    }
+
+    pub const OrderResult = struct {
+        node: Node,
+    };
+};
 
 pub const Node = packed struct(u32) {
     offset: u32,
@@ -533,6 +594,8 @@ pub const Node = packed struct(u32) {
         variable,
         load,
         iadd,
+        isub,
+        imul,
         convert_s_to_f,
         fadd,
         fsub,
@@ -550,6 +613,8 @@ pub const Node = packed struct(u32) {
         load: Load,
         variable: Variable,
         iadd: IAdd,
+        isub: IAdd,
+        imul: IAdd,
         convert_s_to_f: ConvertSToF,
         fadd: FAdd,
         fsub: FSub,
@@ -652,173 +717,114 @@ pub const Node = packed struct(u32) {
     };
 };
 
-pub fn printNodes(ir: Ir, writer: *std.Io.Writer) !void {
-    _ = try writer.print("Types:\n\n", .{});
-
-    for (ir.types.keys()) |node| {
-        _ = try writer.splatByteAll(' ', 4);
-
-        switch (ir.nodeTag(node).*) {
-            .null => {},
-            .type_int => {
-                const type_int = ir.nodeData(node, Node.TypeInt);
-
-                try writer.print("$0x{x:0>2} := type_int: bit_width: {}\n", .{ node.offset, type_int.bit_width });
-            },
-            .type_float => {
-                const type_float = ir.nodeData(node, Node.TypeFloat);
-
-                try writer.print("$0x{x:0>2} := type_float: bit_width: {}\n", .{ node.offset, type_float.bit_width });
-            },
-            .type_pointer => {
-                const type_float = ir.nodeData(node, Node.TypePointer);
-
-                try writer.print("$0x{x:0>2} := type_pointer: type: %0x{x}, storage_class: {s}\n", .{
-                    node.offset,
-                    type_float.type.offset,
-                    @tagName(type_float.storage_class),
-                });
-            },
-            else => {},
-        }
-    }
-
-    _ = try writer.print("\nConstants:\n\n", .{});
-
-    for (ir.constants.values()) |node| {
-        _ = try writer.splatByteAll(' ', 4);
-
-        switch (ir.nodeTag(node).*) {
-            else => {},
-        }
-    }
-
+pub fn printNodes(
+    ir: Ir,
+    writer: *std.Io.Writer,
+    schedule_context: OrderScheduleContext,
+) !void {
     _ = try writer.print("\nInstructions:\n\n", .{});
 
     for (ir.node_list.items) |node| {
         _ = try writer.splatByteAll(' ', 4);
+
+        try writer.print("%{} := ", .{
+            schedule_context.scheduled_map.get(node).?,
+        });
 
         switch (ir.nodeTag(node).*) {
             .null => {},
             .constant => {
                 const constant = ir.nodeData(node, Node.Constant);
 
-                try writer.print("$0x{x:0>2} := op_constant: type: $0{x}, value: ", .{ node.offset, constant.type.offset });
+                try writer.print("op_constant: type: ", .{});
 
-                try ir.printOperand(writer, node);
+                try ir.printOperand(writer, constant.type, schedule_context);
+
+                try writer.print(", value: ", .{});
+
+                try ir.printOperand(writer, node, schedule_context);
 
                 try writer.print("\n", .{});
             },
             .type_int => {
                 const type_int = ir.nodeData(node, Node.TypeInt);
 
-                try writer.print("$0x{x:0>2} := type_int: bit_width: {}\n", .{ node.offset, type_int.bit_width });
+                try writer.print("type_int: bit_width: {}\n", .{type_int.bit_width});
             },
             .type_float => {
                 const type_float = ir.nodeData(node, Node.TypeFloat);
 
-                try writer.print("$0x{x:0>2} := type_float: bit_width: {}\n", .{ node.offset, type_float.bit_width });
+                try writer.print("type_float: bit_width: {}\n", .{type_float.bit_width});
             },
             .type_pointer => {
                 const type_float = ir.nodeData(node, Node.TypePointer);
 
-                try writer.print("$0x{x:0>2} := type_pointer: type: %0x{x}, storage_class: {s}\n", .{
-                    node.offset,
+                try writer.print("type_pointer: type: %0x{x}, storage_class: {s}\n", .{
                     type_float.type.offset,
                     @tagName(type_float.storage_class),
                 });
             },
             .variable => {
-                const variable = ir.nodeData(node, Node.Variable);
-                _ = variable; // autofix
+                const instruction = ir.nodeData(node, Node.Variable);
 
-                try writer.print("$0x{x:0>2} := op_variable\n", .{node.offset});
+                try writer.print("op_variable: ", .{});
+
+                try ir.printOperand(writer, instruction.type, schedule_context);
+
+                try writer.print("\n", .{});
             },
             .load => {
                 const instruction = ir.nodeData(node, Node.Load);
 
-                try writer.print("$0x{x:0>2} := op_load: ", .{node.offset});
+                try writer.print("op_load: ", .{});
 
-                try ir.printOperand(writer, instruction.pointer);
+                try ir.printOperand(writer, instruction.pointer, schedule_context);
 
                 try writer.writeAll("\n");
             },
-            .iadd => {
+            .iadd,
+            .isub,
+            .imul,
+            .fadd,
+            .fsub,
+            .fmul,
+            => |node_tag| {
                 const instruction = ir.nodeData(node, Node.IAdd);
 
-                try writer.print("$0x{x:0>2} := op_iadd: ", .{node.offset});
+                try writer.print("op_{s}: ", .{@tagName(node_tag)});
 
-                try ir.printOperand(writer, instruction.lhs);
+                try ir.printOperand(writer, instruction.lhs, schedule_context);
 
                 try writer.print(", ", .{});
 
-                try ir.printOperand(writer, instruction.rhs);
+                try ir.printOperand(writer, instruction.rhs, schedule_context);
 
                 try writer.writeAll("\n");
             },
             .convert_s_to_f => {
                 const instruction = ir.nodeData(node, Node.ConvertSToF);
 
-                try writer.print("$0x{x:0>2} := op_convert_s_to_f: ", .{node.offset});
+                try writer.print("op_convert_s_to_f: ", .{});
 
-                try ir.printOperand(writer, instruction.operand);
-
-                try writer.writeAll("\n");
-            },
-            .fadd => {
-                const instruction = ir.nodeData(node, Node.FAdd);
-
-                try writer.print("$0x{x:0>2} := op_fadd: ", .{node.offset});
-
-                try ir.printOperand(writer, instruction.lhs);
-
-                try writer.print(", ", .{});
-
-                try ir.printOperand(writer, instruction.rhs);
-
-                try writer.writeAll("\n");
-            },
-            .fsub => {
-                const instruction = ir.nodeData(node, Node.FSub);
-
-                try writer.print("$0x{x:0>2} := op_fsub: ", .{node.offset});
-
-                try ir.printOperand(writer, instruction.lhs);
-
-                try writer.print(", ", .{});
-
-                try ir.printOperand(writer, instruction.rhs);
-
-                try writer.writeAll("\n");
-            },
-            .fmul => {
-                const fmul = ir.nodeData(node, Node.FAdd);
-
-                try writer.print("$0x{x:0>2} := op_fmul: ", .{node.offset});
-
-                try ir.printOperand(writer, fmul.lhs);
-
-                try writer.print(", ", .{});
-
-                try ir.printOperand(writer, fmul.rhs);
+                try ir.printOperand(writer, instruction.operand, schedule_context);
 
                 try writer.writeAll("\n");
             },
             .fnegate => {
                 const fnegate = ir.nodeData(node, Node.FNegate);
 
-                try writer.print("$0x{x:0>2} := op_fnegate: ", .{node.offset});
+                try writer.print("op_fnegate: ", .{});
 
-                try ir.printOperand(writer, fnegate.operand);
+                try ir.printOperand(writer, fnegate.operand, schedule_context);
 
                 try writer.writeAll("\n");
             },
             .return_value => {
                 const return_value = ir.nodeData(node, Node.ReturnValue);
 
-                try writer.print("$0x{x:0>2} := op_return: ", .{node.offset});
+                try writer.print("op_return: ", .{});
 
-                try ir.printOperand(writer, return_value.return_value);
+                try ir.printOperand(writer, return_value.return_value, schedule_context);
 
                 try writer.writeAll("\n");
             },
@@ -826,7 +832,12 @@ pub fn printNodes(ir: Ir, writer: *std.Io.Writer) !void {
     }
 }
 
-pub fn printOperand(ir: Ir, writer: *std.Io.Writer, node: Node) !void {
+pub fn printOperand(
+    ir: Ir,
+    writer: *std.Io.Writer,
+    node: Node,
+    schedule_context: OrderScheduleContext,
+) !void {
     switch (ir.nodeTag(node).*) {
         .constant => {
             const constant = ir.nodeData(node, Node.Constant);
@@ -846,7 +857,7 @@ pub fn printOperand(ir: Ir, writer: *std.Io.Writer, node: Node) !void {
             }
         },
         else => {
-            try writer.print("$0x{x}", .{node.offset});
+            try writer.print("%{}", .{schedule_context.scheduled_map.get(node).?});
         },
     }
 }
