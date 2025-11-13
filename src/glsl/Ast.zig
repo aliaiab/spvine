@@ -554,6 +554,243 @@ pub const Node = struct {
     };
 };
 
+///Prints a nice looking tree using unicode characters for the tree links
+pub fn print(
+    ast: Ast,
+    writer: *std.Io.Writer,
+    gpa: std.mem.Allocator,
+) !void {
+    var terminated_levels: std.ArrayList(u8) = .empty;
+    defer terminated_levels.deinit(gpa);
+
+    for (ast.root_decls, 0..) |root_decl, decl_index| {
+        try printNode(
+            ast,
+            writer,
+            gpa,
+            &terminated_levels,
+            root_decl,
+            0,
+            decl_index,
+            ast.root_decls.len,
+        );
+    }
+}
+
+pub fn printNode(
+    ast: Ast,
+    writer: *std.Io.Writer,
+    gpa: std.mem.Allocator,
+    terminated_levels: *std.ArrayList(u8),
+    node: Ast.NodePointer,
+    depth: u32,
+    sibling_index: usize,
+    sibling_count: usize,
+) !void {
+    const node_tag = node.tag;
+
+    if (node == Ast.NodePointer.nil) {
+        return;
+    }
+
+    const termination_index = terminated_levels.items.len;
+    const is_terminator = sibling_index == sibling_count - 1;
+
+    if (is_terminator) {
+        try terminated_levels.append(gpa, @intCast(depth));
+    }
+
+    defer if (is_terminator) {
+        terminated_levels.items[termination_index] = 255;
+    };
+
+    switch (node_tag) {
+        .param_list => {
+            const list = node.data(Ast.Node.ParamList);
+
+            if (list.params.len == 0) {
+                return;
+            }
+        },
+        .statement_block => {
+            const block = node.data(Ast.Node.StatementBlock);
+
+            if (block.statements.len == 0) {
+                return;
+            }
+        },
+        else => {},
+    }
+
+    for (0..depth) |level| {
+        const is_terminated: bool = blk: {
+            for (terminated_levels.items) |terminated_depth| {
+                if (terminated_depth == level) {
+                    break :blk true;
+                }
+            }
+
+            break :blk false;
+        };
+
+        if (is_terminated) {
+            try writer.print("  ", .{});
+        } else {
+            try writer.print("{s} ", .{"│"});
+        }
+    }
+
+    switch (node_tag) {
+        inline else => |tag| {
+            switch (tag) {
+                else => {
+                    @setEvalBranchQuota(100000);
+
+                    //TODO: this might make compile times bad
+                    const is_leaf: bool = blk: {
+                        inline for (std.meta.fields(std.meta.TagPayload(Ast.Node.Data, tag))) |field| {
+                            switch (field.type) {
+                                Ast.NodeIndex,
+                                []const Ast.NodeIndex,
+                                => {
+                                    comptime break :blk false;
+                                },
+                                else => {},
+                            }
+                        }
+
+                        break :blk true;
+                    };
+
+                    const connecting_string = if (is_terminator) "└" else "├";
+
+                    try writer.print("{s}", .{connecting_string});
+                    try writer.print("{s}", .{if (is_leaf) "──" else "─┬"});
+
+                    const node_data = node.data(std.meta.TagPayload(Ast.Node.Data, tag)).*;
+
+                    var sub_sibling_count: usize = 0;
+
+                    inline for (std.meta.fields(@TypeOf(node_data))) |payload_field| {
+                        switch (payload_field.type) {
+                            Ast.NodeIndex => {
+                                sub_sibling_count += @intFromBool(@field(node_data, payload_field.name) != Ast.NodeIndex.nil);
+                            },
+                            Ast.TokenIndex,
+                            Token.Tag,
+                            => {},
+                            []const Ast.NodeIndex => {
+                                sub_sibling_count += @intCast(@field(node_data, payload_field.name).len);
+                            },
+                            else => {
+                                @compileError("Node data type not supported");
+                            },
+                        }
+                    }
+
+                    const symbol_map: std.EnumMap(Ast.Node.Tag, []const u8) = .init(.{
+                        .expression_binary_comma = ",",
+                        .expression_binary_add = "+",
+                        .expression_binary_sub = "-",
+                        .expression_binary_mul = "*",
+                        .expression_binary_div = "/",
+                        .expression_binary_eql = "==",
+                        .expression_binary_assign = "=",
+                        .expression_binary_assign_add = "+=",
+                        .expression_binary_assign_sub = "-=",
+                        .expression_binary_assign_mul = "*=",
+                        .expression_binary_assign_div = "/=",
+                        .expression_binary_gt = ">",
+                        .expression_binary_geql = ">=",
+                        .expression_binary_lt = "<",
+                        .expression_binary_leql = "<=",
+                        .statement_if = "if",
+                    });
+
+                    if (symbol_map.get(tag)) |node_symbol| {
+                        try writer.print("[{s}]", .{node_symbol});
+                    } else {
+                        try writer.print("{s}: ", .{@tagName(tag)});
+                    }
+
+                    inline for (std.meta.fields(@TypeOf(node_data)), 0..) |payload_field, field_index| {
+                        const field_value = @field(node_data, payload_field.name);
+
+                        switch (payload_field.type) {
+                            Ast.TokenIndex => {
+                                try writer.print(payload_field.name ++ ": " ++ "{s}", .{ast.tokenString(field_value)});
+                                const token_location = ast.tokenLocation(field_value);
+
+                                try writer.print("({s}:{}:{})", .{ token_location.source_name, token_location.line, token_location.column });
+                            },
+                            Token.Tag => {
+                                try writer.print(payload_field.name ++ ": " ++ "{s}", .{@tagName(field_value)});
+                            },
+                            else => {},
+                        }
+
+                        switch (payload_field.type) {
+                            Ast.TokenIndex,
+                            Token.Tag,
+                            => {
+                                if (field_index != std.meta.fields(@TypeOf(node_data)).len - 1) {
+                                    try writer.print(", ", .{});
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+
+                    try writer.print("\n", .{});
+
+                    var sub_sibling_index: usize = 0;
+
+                    inline for (std.meta.fields(@TypeOf(node_data))) |payload_field| {
+                        const field_value = @field(node_data, payload_field.name);
+
+                        switch (payload_field.type) {
+                            Ast.NodeIndex => {
+                                if (field_value != Ast.NodeIndex.nil) {
+                                    try printNode(
+                                        ast,
+                                        writer,
+                                        gpa,
+                                        terminated_levels,
+                                        .relativeFrom(node, field_value),
+                                        depth + 1,
+                                        sub_sibling_index,
+                                        sub_sibling_count,
+                                    );
+                                    sub_sibling_index += 1;
+                                }
+                            },
+                            []const Ast.NodeIndex => {
+                                for (field_value, 0..) |sub_node, array_sibling_index| {
+                                    try printNode(
+                                        ast,
+                                        writer,
+                                        gpa,
+                                        terminated_levels,
+                                        .relativeFrom(node, sub_node),
+                                        depth + 1,
+                                        array_sibling_index,
+                                        field_value.len,
+                                    );
+                                }
+
+                                if (field_value.len != 0) {
+                                    sub_sibling_index += 1;
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                },
+            }
+        },
+    }
+}
+
 const std = @import("std");
 const Ast = @This();
 const Sema = @import("Sema.zig");
