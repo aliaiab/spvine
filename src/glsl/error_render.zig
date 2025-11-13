@@ -2,7 +2,6 @@
 
 ///Renders errors to writer in a similar style to the zig compiler
 pub fn printErrors(
-    file_path: []const u8,
     ast: Ast,
     sema: ?*Sema,
     errors: []const Ast.Error,
@@ -15,6 +14,7 @@ pub fn printErrors(
 
         var error_anchor_start: usize = 0;
         var error_anchor_end: usize = 0;
+        var error_anchor_file: usize = 0;
 
         switch (error_value.anchor) {
             .token => |error_token| {
@@ -23,6 +23,7 @@ pub fn printErrors(
                 // is_same_line = ast.tokenLocation(previous_token).line == ast.tokenLocation(error_token).line;
                 //TODO: walk back in the source stream until you find the previous token
                 is_same_line = true;
+                error_anchor_file = error_token.file_index;
 
                 loc = ast.tokenLocation(error_token);
 
@@ -43,7 +44,9 @@ pub fn printErrors(
                 error_anchor_start = node_string.start;
                 error_anchor_end = node_string.end;
 
-                loc = ast.sourceStringLocation(ast.source[error_anchor_start..error_anchor_end]);
+                error_anchor_file = node_string.file_index;
+
+                loc = ast.sourceStringLocation(node_string.file_index, ast.sources[node_string.file_index][error_anchor_start..error_anchor_end]);
             },
         }
 
@@ -53,6 +56,8 @@ pub fn printErrors(
         const terminal_bold = "\x1B[1;37m";
 
         const color_end = "\x1B[0;39m";
+
+        const file_path = loc.source_name;
 
         //Message render
         switch (error_value.tag) {
@@ -79,7 +84,7 @@ pub fn printErrors(
             .directive_error => {
                 const error_directive_end = error_value.anchor.token.string_start + error_value.anchor.token.string_length;
 
-                const error_message_to_eof = ast.source[error_directive_end..];
+                const error_message_to_eof = ast.sources[error_value.anchor.token.file_index][error_directive_end..];
 
                 const error_message = error_message_to_eof[0..std.mem.indexOfScalar(u8, error_message_to_eof, '\n').?];
 
@@ -357,7 +362,7 @@ pub fn printErrors(
             },
         }
 
-        var tokenizer = Tokenizer.init(ast.source[0 .. loc.line_end + 1]);
+        var tokenizer = Tokenizer.init(ast.sources[error_anchor_file][0..loc.line_end]);
 
         tokenizer.index = loc.line_start;
 
@@ -367,10 +372,10 @@ pub fn printErrors(
         while (tokenizer.next()) |token| {
             if (last_token != null) {
                 if (last_token.?.end != token.start) {
-                    _ = writer.write(ast.source[last_token.?.end..token.start]) catch unreachable;
+                    _ = writer.write(ast.sources[error_anchor_file][last_token.?.end..token.start]) catch unreachable;
                 }
             } else {
-                for (ast.source[loc.line_start..token.start]) |char| {
+                for (ast.sources[error_anchor_file][loc.line_start..token.start]) |char| {
                     _ = writer.writeByte(char) catch unreachable;
                 }
             }
@@ -383,6 +388,7 @@ pub fn printErrors(
                 writer,
                 ast,
                 token,
+                error_anchor_file,
             );
 
             last_token = token;
@@ -390,7 +396,7 @@ pub fn printErrors(
 
         if (last_token != null and last_token.?.end != loc.line_end and last_token.?.tag != .directive_end) {
             _ = writer.writeAll(terminal_green) catch unreachable;
-            _ = writer.writeAll(ast.source[last_token.?.end..loc.line_end]) catch unreachable;
+            _ = writer.writeAll(ast.sources[error_anchor_file][last_token.?.end..loc.line_end]) catch unreachable;
             _ = writer.writeAll(color_end) catch unreachable;
         }
 
@@ -421,6 +427,7 @@ fn printAstToken(
     writer: *std.Io.Writer,
     ast: Ast,
     token: Tokenizer.Token,
+    file_index: usize,
 ) !void {
     const terminal_green = "\x1B[32m";
     const terminal_blue = "\x1B[34m";
@@ -453,7 +460,7 @@ fn printAstToken(
             writer.print(terminal_purple, .{}) catch {};
 
             writer.print("{s}" ++ color_end, .{
-                ast.source[token.start..token.end],
+                ast.sources[file_index][token.start..token.end],
             }) catch {};
         },
         .keyword_layout,
@@ -491,7 +498,7 @@ fn printAstToken(
             writer.print(terminal_blue, .{}) catch {};
 
             writer.print("{s}" ++ color_end, .{
-                ast.source[token.start..token.end],
+                ast.sources[file_index][token.start..token.end],
             }) catch {};
         },
         .keyword_return,
@@ -512,7 +519,7 @@ fn printAstToken(
             writer.print(terminal_purple, .{}) catch {};
 
             writer.print("{s}" ++ color_end, .{
-                ast.source[token.start..token.end],
+                ast.sources[file_index][token.start..token.end],
             }) catch {};
         },
         .left_brace,
@@ -521,25 +528,25 @@ fn printAstToken(
             writer.print(terminal_yellow, .{}) catch {};
 
             writer.print("{s}" ++ color_end, .{
-                ast.source[token.start..token.end],
+                ast.sources[file_index][token.start..token.end],
             }) catch {};
         },
         .literal_number => {
             writer.print(terminal_green, .{}) catch {};
 
             writer.print("{s}" ++ color_end, .{
-                ast.source[token.start..token.end],
+                ast.sources[file_index][token.start..token.end],
             }) catch {};
         },
         .literal_string => {
             writer.print(terminal_cyan, .{}) catch {};
 
             writer.print("{s}" ++ color_end, .{
-                ast.source[token.start..token.end],
+                ast.sources[file_index][token.start..token.end],
             }) catch {};
         },
         .identifier => {
-            const string = ast.source[token.start..token.end];
+            const string = ast.sources[file_index][token.start..token.end];
 
             if (true) {
                 writer.print(terminal_white, .{}) catch {};
@@ -591,7 +598,7 @@ fn printAstToken(
         },
         else => {
             writer.print("{s}", .{
-                ast.source[token.start..token.end],
+                ast.sources[file_index][token.start..token.end],
             }) catch {};
         },
     }

@@ -1,7 +1,7 @@
 //! The abstract syntax tree (AST) for glsl
 
-source: []const u8,
-source_name: []const u8,
+sources: []const []const u8,
+source_names: []const []const u8,
 defines: Parser.DefineMap,
 errors: []const Error,
 root_decls: []const NodePointer,
@@ -25,11 +25,12 @@ pub fn parse(
     var scratch_arena: std.heap.ArenaAllocator = .init(gpa);
     defer scratch_arena.deinit();
 
-    var parser = Parser.init(
+    var parser = try Parser.init(
         gpa,
         ast_node_arena,
         scratch_arena.allocator(),
         source,
+        source_name,
     );
     parser.errors = errors;
     defer parser.deinit();
@@ -45,8 +46,8 @@ pub fn parse(
     };
 
     return Ast{
-        .source = source,
-        .source_name = source_name,
+        .sources = parser.sources.items,
+        .source_names = parser.source_map.keys(),
         .errors = try parser.errors.toOwnedSlice(gpa),
         .defines = parser.defines,
         .root_decls = parser.root_decls,
@@ -68,22 +69,31 @@ pub const SourceLocation = struct {
 };
 
 pub fn tokenLocation(self: Ast, token_index: TokenIndex) SourceLocation {
-    return self.sourceStringLocation(self.tokenString(token_index));
+    return self.sourceStringLocation(
+        token_index.file_index,
+        self.tokenString(token_index),
+    );
 }
 
-pub fn sourceStringLocation(self: Ast, source_string: []const u8) SourceLocation {
+pub fn sourceStringLocation(
+    self: Ast,
+    file_index: usize,
+    source_string: []const u8,
+) SourceLocation {
     var loc = SourceLocation{
-        .source_name = self.source_name,
+        .source_name = self.source_names[file_index],
         .line = 1,
         .column = 1,
         .line_start = 0,
         .line_end = 0,
     };
 
-    for (self.source, 0..) |c, i| {
-        if (self.source[i..].ptr == source_string.ptr) {
+    const source = self.sources[file_index];
+
+    for (source, 0..) |c, i| {
+        if (source[i..].ptr == source_string.ptr) {
             loc.line_end = @as(u32, @intCast(i));
-            while (loc.line_end < self.source.len and self.source[loc.line_end] != '\n') {
+            while (loc.line_end < source.len and source[loc.line_end] != '\n') {
                 loc.line_end += 1;
             }
             return loc;
@@ -105,19 +115,22 @@ pub fn tokenString(self: Ast, token_index: TokenIndex) []const u8 {
     const token_start = token_index.string_start;
     const token_end = token_index.string_start + token_index.string_length;
 
-    return self.source[token_start..token_end];
+    const source = self.sources[token_index.file_index];
+
+    return source[token_start..token_end];
 }
 
 pub fn nodeStringRange(
     self: Ast,
     node: NodePointer,
 ) SourceStringRange {
-    const node_string_range: SourceStringRange = .{ .start = 0, .end = self.source.len };
+    const node_string_range: SourceStringRange = .{ .start = 0, .end = self.sources[0].len, .file_index = 0 };
 
     return self.nodeStringRecursive(node, node_string_range);
 }
 
-const SourceStringRange = struct {
+pub const SourceStringRange = struct {
+    file_index: usize,
     start: usize,
     end: usize,
 };
@@ -167,20 +180,27 @@ fn nodeStringRecursive(
 
             result_range.start = @min(lhs_range.start, rhs_range.start);
             result_range.end = @max(lhs_range.end, rhs_range.end);
+            result_range.file_index = binary_expr.op_token.file_index;
 
             return result_range;
         },
         .expression_literal_boolean => {
             const literal_boolean = node.data(Node.LiteralBoolean);
             maybe_token = literal_boolean.token;
+
+            result_range.file_index = literal_boolean.token.file_index;
         },
         .expression_literal_number => {
             const literal_number = node.data(Node.ExpressionLiteralNumber);
             maybe_token = literal_number.token;
+
+            result_range.file_index = literal_number.token.file_index;
         },
         .expression_identifier => {
             const identifier = node.data(Node.Identifier);
             maybe_token = identifier.token;
+
+            result_range.file_index = identifier.token.file_index;
         },
         .expression_unary_minus => {
             const binary_expr = node.data(Node.BinaryExpression);
@@ -192,11 +212,13 @@ fn nodeStringRecursive(
             return .{
                 .start = rhs_range.start -| 1,
                 .end = rhs_range.end,
+                .file_index = rhs_range.file_index,
             };
         },
         .type_expr => {
             const identifier = node.data(Node.TypeExpr);
             maybe_token = identifier.token;
+            result_range.file_index = identifier.token.file_index;
         },
         else => {
             @panic(@tagName(node.tag));
@@ -231,8 +253,8 @@ pub const Error = struct {
             definition_identifier: Ast.TokenIndex,
         },
         modified_const: struct {
-            value_assigned_to: Ast.NodeIndex,
-            assignment: Ast.NodeIndex,
+            value_assigned_to: Ast.NodeRelativePointer,
+            assignment: Ast.NodeRelativePointer,
         },
         type_mismatch: struct {
             lhs_type: Sema.TypeIndex,
@@ -303,6 +325,7 @@ pub const TokenIndex = packed struct(u64) {
     pub const end_of_file: TokenIndex = .{ .file_index = 0, .tag = .end_of_file, .string_length = 0, .string_start = 0 };
 
     pub fn fromToken(
+        source_index: usize,
         root_source: []const u8,
         sub_source: []const u8,
         token: Token,
@@ -316,8 +339,7 @@ pub const TokenIndex = packed struct(u64) {
         const string_length: u10 = @intCast(token_end - token_start);
 
         return .{
-            //TODO: handle multiple files
-            .file_index = 0,
+            .file_index = @intCast(source_index),
             .string_start = string_start,
             .string_length = string_length,
             .tag = token.tag,
@@ -325,66 +347,66 @@ pub const TokenIndex = packed struct(u64) {
     }
 };
 
-pub const NodeIndex = packed struct(u32) {
+///A relative pointer used to point to nodes within the Ast
+pub const NodeRelativePointer = packed struct(u32) {
     tag: Node.Tag,
-    index: IndexInt,
+    relative_ptr: RelativePtrInt,
 
-    pub const IndexInt: type = std.meta.Int(.signed, @bitSizeOf(u32) - @bitSizeOf(Node.Tag));
+    pub const RelativePtrInt: type = std.meta.Int(.signed, @bitSizeOf(u32) - @bitSizeOf(Node.Tag));
 
-    pub const nil: NodeIndex = .{
+    pub const nil: NodeRelativePointer = .{
         //This is undefined so we don't have to waste a bit on the nil node in Node.Tag
         .tag = @enumFromInt(0),
-        .index = 0,
+        .relative_ptr = 0,
     };
 
-    pub fn relativeTo(parent: NodePointer, node: NodePointer) NodeIndex {
+    pub fn relativeTo(parent: NodePointer, node: NodePointer) NodeRelativePointer {
         if (node == NodePointer.nil) {
             return .nil;
         }
 
-        const parent_int: i64 = @intCast(@intFromPtr(parent.data_ptr));
-        const value_int: i64 = @intCast(@intFromPtr(node.data_ptr));
+        const parent_int: i64 = @intCast(parent.data_ptr);
+        const value_int: i64 = @intCast(node.data_ptr);
 
         const relative_ptr = value_int - parent_int;
 
         return .{
             .tag = node.tag,
-            .index = @intCast(relative_ptr),
+            .relative_ptr = @intCast(relative_ptr),
         };
     }
 };
 
 ///A fat pointer type for conveniently passing nodes around
 ///Not to actually be stored in memory, only for locals
-pub const NodePointer = packed struct {
+pub const NodePointer = packed struct(u64) {
     tag: Node.Tag,
-    data_ptr: ?[*]u8,
+    _padding: u2 = 0,
+    _padding1: u8 = 0,
+    //Assumes that the address space is 48 bits (which is true for x86_64 linux and windows at least but I'm not sure about other platforms)
+    //TODO: add a fall back version of this struct which is a ptr + tag if needed on any platforms
+    data_ptr: u48,
 
     pub const nil: NodePointer = .{
         .tag = undefined,
-        .data_ptr = null,
+        .data_ptr = 0,
     };
 
-    pub fn relativeFrom(parent: NodePointer, node_index: NodeIndex) NodePointer {
-        const offset: i64 = node_index.index;
+    pub fn relativeFrom(parent: NodePointer, node_index: NodeRelativePointer) NodePointer {
+        const offset: i64 = node_index.relative_ptr;
 
-        const base: i64 = @intCast(@intFromPtr(parent.data_ptr));
+        const base: i64 = @intCast(parent.data_ptr);
 
         const result: u64 = @intCast(base + offset);
 
         return .{
             .tag = node_index.tag,
-            .data_ptr = @ptrFromInt(result),
+            .data_ptr = @intCast(result),
         };
     }
 
     pub fn data(ptr: NodePointer, comptime T: type) *T {
-        if (!std.mem.isAligned(@intFromPtr(ptr.data_ptr.?), @alignOf(T))) {
-            std.debug.print("expected alignment {} but found 0x{x}\n", .{ @alignOf(T), @intFromPtr(ptr.data_ptr) });
-            @panic("");
-        }
-
-        return @ptrCast(@alignCast(ptr.data_ptr.?));
+        return @ptrFromInt(ptr.data_ptr);
     }
 };
 
@@ -482,11 +504,11 @@ pub const Node = struct {
 
     pub const StructDefinition = struct {
         name: TokenIndex,
-        fields: []const NodeIndex,
+        fields: []const NodeRelativePointer,
     };
 
     pub const StructField = struct {
-        type_expr: NodeIndex,
+        type_expr: NodeRelativePointer,
         name: TokenIndex,
     };
 
@@ -507,50 +529,50 @@ pub const Node = struct {
     };
 
     pub const Procedure = struct {
-        return_type: NodeIndex,
+        return_type: NodeRelativePointer,
         name: TokenIndex,
-        param_list: NodeIndex,
-        body: NodeIndex,
+        param_list: NodeRelativePointer,
+        body: NodeRelativePointer,
     };
 
     pub const ParamList = struct {
-        params: []const NodeIndex,
+        params: []const NodeRelativePointer,
     };
 
     pub const ParamExpr = struct {
-        type_expr: NodeIndex,
+        type_expr: NodeRelativePointer,
         name: TokenIndex,
         qualifier: TokenIndex,
     };
 
     pub const BinaryExpression = struct {
         op_token: TokenIndex,
-        left: NodeIndex,
-        right: NodeIndex,
+        left: NodeRelativePointer,
+        right: NodeRelativePointer,
     };
 
     pub const StatementIf = struct {
         if_token: TokenIndex,
-        condition_expression: NodeIndex,
-        taken_statement: NodeIndex,
-        not_taken_statement: NodeIndex,
+        condition_expression: NodeRelativePointer,
+        taken_statement: NodeRelativePointer,
+        not_taken_statement: NodeRelativePointer,
     };
 
     pub const StatementReturn = struct {
         return_token: TokenIndex,
-        expression: NodeIndex,
+        expression: NodeRelativePointer,
     };
 
     pub const StatementVarInit = struct {
         identifier: TokenIndex,
         qualifier: TokenIndex,
-        type_expr: NodeIndex,
-        array_length_specifier: NodeIndex,
-        expression: NodeIndex,
+        type_expr: NodeRelativePointer,
+        array_length_specifier: NodeRelativePointer,
+        expression: NodeRelativePointer,
     };
 
     pub const StatementBlock = struct {
-        statements: []const NodeIndex,
+        statements: []const NodeRelativePointer,
     };
 };
 
@@ -562,6 +584,8 @@ pub fn print(
 ) !void {
     var terminated_levels: std.ArrayList(u8) = .empty;
     defer terminated_levels.deinit(gpa);
+
+    try writer.print("root:\n", .{});
 
     for (ast.root_decls, 0..) |root_decl, decl_index| {
         try printNode(
@@ -650,8 +674,8 @@ pub fn printNode(
                     const is_leaf: bool = blk: {
                         inline for (std.meta.fields(std.meta.TagPayload(Ast.Node.Data, tag))) |field| {
                             switch (field.type) {
-                                Ast.NodeIndex,
-                                []const Ast.NodeIndex,
+                                Ast.NodeRelativePointer,
+                                []const Ast.NodeRelativePointer,
                                 => {
                                     comptime break :blk false;
                                 },
@@ -673,13 +697,13 @@ pub fn printNode(
 
                     inline for (std.meta.fields(@TypeOf(node_data))) |payload_field| {
                         switch (payload_field.type) {
-                            Ast.NodeIndex => {
-                                sub_sibling_count += @intFromBool(@field(node_data, payload_field.name) != Ast.NodeIndex.nil);
+                            Ast.NodeRelativePointer => {
+                                sub_sibling_count += @intFromBool(@field(node_data, payload_field.name) != Ast.NodeRelativePointer.nil);
                             },
                             Ast.TokenIndex,
                             Token.Tag,
                             => {},
-                            []const Ast.NodeIndex => {
+                            []const Ast.NodeRelativePointer => {
                                 sub_sibling_count += @intCast(@field(node_data, payload_field.name).len);
                             },
                             else => {
@@ -749,8 +773,8 @@ pub fn printNode(
                         const field_value = @field(node_data, payload_field.name);
 
                         switch (payload_field.type) {
-                            Ast.NodeIndex => {
-                                if (field_value != Ast.NodeIndex.nil) {
+                            Ast.NodeRelativePointer => {
+                                if (field_value != Ast.NodeRelativePointer.nil) {
                                     try printNode(
                                         ast,
                                         writer,
@@ -764,7 +788,7 @@ pub fn printNode(
                                     sub_sibling_index += 1;
                                 }
                             },
-                            []const Ast.NodeIndex => {
+                            []const Ast.NodeRelativePointer => {
                                 for (field_value, 0..) |sub_node, array_sibling_index| {
                                     try printNode(
                                         ast,
