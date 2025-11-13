@@ -6,21 +6,37 @@ pub fn main() !void {
     var test_glsl_path: []const u8 = "src/test.glsl";
 
     var optimization_flags: spirv.Ir.OptimizationFlags = .{};
+    var should_print_ast: bool = false;
+    var should_print_ir: bool = false;
 
     {
         var args = std.process.args();
 
         _ = args.skip();
 
-        test_glsl_path = args.next() orelse test_glsl_path;
-
         while (args.next()) |opt_flag| {
-            if (std.mem.eql(u8, opt_flag, "-const_fold")) {
-                optimization_flags.enable_constant_folding = true;
-            }
+            if (opt_flag[0] == '-') {
+                if (std.mem.eql(u8, opt_flag, "-const_fold")) {
+                    optimization_flags.enable_constant_folding = true;
+                }
 
-            if (std.mem.eql(u8, opt_flag, "-const_hoist")) {
-                optimization_flags.enable_constant_hoisting = true;
+                if (std.mem.eql(u8, opt_flag, "-const_hoist")) {
+                    optimization_flags.enable_constant_hoisting = true;
+                }
+
+                if (std.mem.eql(u8, opt_flag, "-debug_print_ast")) {
+                    should_print_ast = true;
+                }
+
+                if (std.mem.eql(u8, opt_flag, "-debug_print_ir")) {
+                    should_print_ir = true;
+                }
+            } else {
+                const ext = std.fs.path.extension(opt_flag);
+
+                if (std.mem.eql(u8, ext, ".glsl")) {
+                    test_glsl_path = opt_flag;
+                }
             }
         }
     }
@@ -28,7 +44,11 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     // defer std.debug.assert(gpa.deinit() != .leak);
 
-    const allocator = gpa.allocator();
+    var allocator = gpa.allocator();
+
+    if (@import("builtin").mode != .Debug) {
+        allocator = std.heap.smp_allocator;
+    }
 
     var stderr_buffer: [1024]u8 = undefined;
     var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
@@ -63,17 +83,20 @@ pub fn main() !void {
     defer ast.deinit(allocator);
 
     if (ast.errors.len != 0) {
-        try glsl.error_render.printErrors(test_glsl_path, ast, null, ast.errors, stderr);
+        try glsl.error_render.printErrors(ast, null, ast.errors, stderr);
 
         return;
     }
 
-    {
-        std.debug.print("\nglsl.Ast:\n", .{});
+    if (should_print_ast) {
+        var unbuffered_stderr = std.fs.File.stderr().writer(&.{});
 
-        try ast.print(stderr, allocator);
+        try unbuffered_stderr.interface.print("\nglsl.Ast:\n", .{});
 
-        std.debug.print("\n", .{});
+        try ast.print(&unbuffered_stderr.interface, allocator);
+
+        try unbuffered_stderr.interface.print("\n", .{});
+        try unbuffered_stderr.interface.flush();
     }
 
     var sema: glsl.Sema = .{
@@ -90,7 +113,7 @@ pub fn main() !void {
     defer allocator.free(errors);
 
     if (errors.len != 0) {
-        try glsl.error_render.printErrors(test_glsl_path, ast, &sema, errors, stderr);
+        try glsl.error_render.printErrors(ast, &sema, errors, stderr);
 
         return;
     }
@@ -102,9 +125,11 @@ pub fn main() !void {
 
     try sema.spirv_ir.computeGlobalOrdering(&schedule_context, allocator);
 
-    try stderr.print("spirv.Ir:\n\n", .{});
+    if (should_print_ir) {
+        try stderr.print("spirv.Ir:\n\n", .{});
 
-    try sema.spirv_ir.printNodes(stderr, schedule_context);
+        try sema.spirv_ir.printNodes(stderr, schedule_context);
+    }
 }
 
 test {
