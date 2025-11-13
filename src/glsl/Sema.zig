@@ -241,7 +241,7 @@ pub fn analyseProcedure(
         procedure_index = overload_query.value_ptr.*;
         const procedure_overload = self.procedures.items[@intFromEnum(procedure_index)];
 
-        if (procedure_overload.body_defined or procedure.body == Ast.NodeIndex.nil) {
+        if (procedure_overload.body_defined or procedure.body == Ast.NodeRelativePointer.nil) {
             try self.errors.append(self.gpa, .{
                 .tag = .identifier_redefined,
                 .anchor = .{ .token = procedure.name },
@@ -261,12 +261,12 @@ pub fn analyseProcedure(
 
         procedure_overload.parameter_types = parameter_types;
         procedure_overload.general_data = procedure_definition;
-        procedure_overload.body_defined = procedure.body != Ast.NodeIndex.nil;
+        procedure_overload.body_defined = procedure.body != Ast.NodeRelativePointer.nil;
 
         overload_query.value_ptr.* = procedure_index;
     }
 
-    if (procedure.body == Ast.NodeIndex.nil) return;
+    if (procedure.body == Ast.NodeRelativePointer.nil) return;
 
     const procedure_data = &self.procedures.items[@intFromEnum(procedure_index)];
 
@@ -298,7 +298,7 @@ pub fn analyseStatement(
 
             var type_index = try self.resolveTypeFromTypeExpr(ast, .relativeFrom(statement_node, var_init.type_expr));
 
-            if (var_init.array_length_specifier != Ast.NodeIndex.nil) {
+            if (var_init.array_length_specifier != Ast.NodeRelativePointer.nil) {
                 const array_length = self.resolveConstantExpression(ast, .relativeFrom(statement_node, var_init.array_length_specifier)) catch |e| {
                     switch (e) {
                         error.ConstantEvaluationFailed => {
@@ -319,7 +319,7 @@ pub fn analyseStatement(
             var initial_value: ?u64 = null;
             var ir_node: spirv.Ir.Node = .nil;
 
-            if (var_init.expression != Ast.NodeIndex.nil) {
+            if (var_init.expression != Ast.NodeRelativePointer.nil) {
                 const expression_result = try self.analyseExpression(ast, .relativeFrom(statement_node, var_init.expression));
 
                 ir_node = expression_result.ir_node;
@@ -434,7 +434,7 @@ pub fn analyseStatement(
             var expr_type: TypeIndex = .void;
             var expr_node: spirv.Ir.Node = .nil;
 
-            if (statement_return.expression != Ast.NodeIndex.nil) {
+            if (statement_return.expression != Ast.NodeRelativePointer.nil) {
                 const expr_result = try self.analyseExpression(ast, .relativeFrom(statement_node, statement_return.expression));
 
                 expr_type = expr_result.type_index;
@@ -445,7 +445,7 @@ pub fn analyseStatement(
                 .null => {
                     try self.errors.append(self.gpa, .{
                         .tag = .type_mismatch,
-                        .anchor = if (statement_return.expression != Ast.NodeIndex.nil) .{
+                        .anchor = if (statement_return.expression != Ast.NodeRelativePointer.nil) .{
                             .node = .relativeFrom(statement_node, statement_return.expression),
                         } else .{
                             .token = statement_return.return_token,
@@ -1672,7 +1672,7 @@ pub const Type = union(enum) {
 
     pub const StructField = struct {
         type_index: TypeIndex,
-        node: Ast.NodeIndex,
+        node: Ast.NodeRelativePointer,
     };
 };
 

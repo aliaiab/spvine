@@ -12,12 +12,27 @@ pub fn Map(comptime V: type) type {
     return std.HashMapUnmanaged([]const u8, V, TokenStringContext, 80);
 }
 
+pub fn ArrayMap(comptime V: type) type {
+    return std.ArrayHashMapUnmanaged([]const u8, V, TokenStringArrayContext, true);
+}
+
 pub const TokenStringContext = struct {
     pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
         return tokenStringEql(a, b);
     }
 
     pub fn hash(_: @This(), a: []const u8) u64 {
+        return tokenStringHash(a);
+    }
+};
+
+pub const TokenStringArrayContext = struct {
+    pub fn eql(_: @This(), a: []const u8, b: []const u8, b_index: usize) bool {
+        _ = b_index; // autofix
+        return tokenStringEql(a, b);
+    }
+
+    pub fn hash(_: @This(), a: []const u8) u32 {
         return tokenStringHash(a);
     }
 };
@@ -110,7 +125,7 @@ pub fn tokenStringIsCanonical(string: []const u8) bool {
 
 ///TODO: use a better hash function?
 ///Computes the hash of the string as if the string contained no line continuation digraphs, if it has any.
-pub fn tokenStringHash(str: []const u8) u64 {
+pub fn tokenStringHash(str: []const u8) u32 {
     var hash: u32 = 0;
 
     const b = 255;
