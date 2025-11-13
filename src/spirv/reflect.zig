@@ -143,10 +143,6 @@ pub fn parse(allocator: std.mem.Allocator, result: *Result, module: []align(4) c
     }
 }
 
-test "parse" {
-    // try parse(std.testing.allocator, @alignCast(@embedFile("../test.spv")));
-}
-
 const std = @import("std");
 const spirv = @import("../spirv.zig");
 const Iterator = @import("Iterator.zig");

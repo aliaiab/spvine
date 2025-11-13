@@ -1,6 +1,5 @@
 pub const glsl = @import("glsl.zig");
 pub const spirv = @import("spirv.zig");
-pub const x86_64 = @import("x86_64.zig");
 
 pub fn main() !void {
     var test_glsl_path: []const u8 = "src/test.glsl";
