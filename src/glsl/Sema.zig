@@ -61,19 +61,23 @@ pub fn analyse(sema: *Sema, ast: Ast, allocator: std.mem.Allocator) ![]Ast.Error
 pub fn analyseStructDefinition(
     self: *Sema,
     ast: Ast,
-    node: Ast.NodeIndex,
+    node: Ast.NodePointer,
 ) !void {
-    const definition: Ast.Node.StructDefinition = ast.dataFromNode(node, .struct_definition);
+    const definition = node.data(Ast.Node.StructDefinition);
 
     var fields: token_map.Map(Type.StructField) = .{};
 
-    for (definition.fields) |field_node| {
-        const field_node_data: Ast.Node.StructField = ast.dataFromNode(field_node, .struct_field);
+    for (definition.fields) |field_node_index| {
+        const field_node: Ast.NodePointer = .relativeFrom(node, field_node_index);
 
-        const type_expr = try self.resolveTypeFromTypeExpr(ast, field_node_data.type_expr);
+        const field_node_data = field_node.data(Ast.Node.StructField);
+
+        const type_expr = try self.resolveTypeFromTypeExpr(ast, .relativeFrom(field_node, field_node_data.type_expr));
 
         if (fields.get(ast.tokenString(field_node_data.name))) |original_field| {
-            const original_field_node_data: Ast.Node.StructField = ast.dataFromNode(original_field.node, .struct_field);
+            const original_field_node: Ast.NodePointer = .relativeFrom(node, original_field.node);
+
+            const original_field_node_data = original_field_node.data(Ast.Node.StructField);
 
             try self.errors.append(self.gpa, .{
                 .tag = .identifier_redefined,
@@ -92,7 +96,7 @@ pub fn analyseStructDefinition(
         try fields.putNoClobber(
             self.gpa,
             ast.tokenString(field_node_data.name),
-            .{ .type_index = type_expr, .node = field_node },
+            .{ .type_index = type_expr, .node = .relativeTo(node, field_node) },
         );
     }
 
@@ -132,13 +136,15 @@ pub fn analyseStructDefinition(
 pub fn analyseProcedure(
     self: *Sema,
     ast: Ast,
-    node: Ast.NodeIndex,
+    procedure_node: Ast.NodePointer,
 ) !void {
     try self.scopePush();
     defer self.scopePop();
 
-    const procedure: Ast.Node.Procedure = ast.dataFromNode(node, .procedure);
-    const param_list: Ast.Node.ParamList = ast.dataFromNode(procedure.param_list, .param_list);
+    const procedure = procedure_node.data(Ast.Node.Procedure);
+    const param_list_node: Ast.NodePointer = .relativeFrom(procedure_node, procedure.param_list);
+
+    const param_list = param_list_node.data(Ast.Node.ParamList);
 
     const procedure_definition_get_result = try self.procedure_overloads.getOrPut(self.gpa, ast.tokenString(procedure.name));
     const procedure_definition = procedure_definition_get_result.value_ptr;
@@ -153,7 +159,7 @@ pub fn analyseProcedure(
         };
     }
 
-    procedure_definition.return_type = try self.resolveTypeFromTypeExpr(ast, procedure.return_type);
+    procedure_definition.return_type = try self.resolveTypeFromTypeExpr(ast, .relativeFrom(procedure_node, procedure.return_type));
 
     var procedure_index: ProcedureIndex = undefined;
 
@@ -162,18 +168,21 @@ pub fn analyseProcedure(
 
     const parameter_qualifiers = try self.gpa.alloc(ValueQualifier, param_list.params.len);
 
-    for (param_list.params, 0..) |param_node, param_index| {
-        const param: Ast.Node.ParamExpr = ast.dataFromNode(param_node, .param_expr);
+    for (param_list.params, 0..) |param_node_index, param_index| {
+        const param_node: Ast.NodePointer = .relativeFrom(param_list_node, param_node_index);
+
+        const param = param_node.data(Ast.Node.ParamExpr);
         const param_definition_type = &parameter_types[param_index];
         const param_definition_qualifier = &parameter_qualifiers[param_index];
 
-        const param_type = try self.resolveTypeFromTypeExpr(ast, param.type_expr);
+        const param_type = try self.resolveTypeFromTypeExpr(ast, .relativeFrom(param_node, param.type_expr));
 
-        param_definition_qualifier.* = switch (param.qualifier) {
+        param_definition_qualifier.* = switch (param.qualifier.tag) {
             .keyword_inout => .inout,
             .keyword_out => .out,
             .keyword_in => .in,
             .keyword_const => .constant,
+            .invalid => .in,
             else => unreachable,
         };
 
@@ -264,7 +273,7 @@ pub fn analyseProcedure(
     try self.analyseStatement(
         ast,
         procedure_data,
-        procedure.body,
+        .relativeFrom(procedure_node, procedure.body),
         .{ .block_new_scope = false },
     );
 }
@@ -273,28 +282,28 @@ pub fn analyseStatement(
     self: *Sema,
     ast: Ast,
     procedure: *const Procedure,
-    statement_node: Ast.NodeIndex,
+    statement_node: Ast.NodePointer,
     options: struct {
         ///Whether a statement_block should cause a new scope
         block_new_scope: bool = true,
     },
 ) !void {
-    if (statement_node == Ast.NodeIndex.nil) {
+    if (statement_node == Ast.NodePointer.nil) {
         return;
     }
 
     switch (statement_node.tag) {
         .statement_var_init => {
-            const var_init: Ast.Node.StatementVarInit = ast.dataFromNode(statement_node, .statement_var_init);
+            const var_init = statement_node.data(Ast.Node.StatementVarInit);
 
-            var type_index = try self.resolveTypeFromTypeExpr(ast, var_init.type_expr);
+            var type_index = try self.resolveTypeFromTypeExpr(ast, .relativeFrom(statement_node, var_init.type_expr));
 
             if (var_init.array_length_specifier != Ast.NodeIndex.nil) {
-                const array_length = self.resolveConstantExpression(ast, var_init.array_length_specifier) catch |e| {
+                const array_length = self.resolveConstantExpression(ast, .relativeFrom(statement_node, var_init.array_length_specifier)) catch |e| {
                     switch (e) {
                         error.ConstantEvaluationFailed => {
                             try self.errors.append(self.gpa, .{
-                                .anchor = .{ .node = var_init.array_length_specifier },
+                                .anchor = .{ .node = .relativeFrom(statement_node, var_init.array_length_specifier) },
                                 .tag = .expected_constant_expression,
                             });
 
@@ -311,7 +320,7 @@ pub fn analyseStatement(
             var ir_node: spirv.Ir.Node = .nil;
 
             if (var_init.expression != Ast.NodeIndex.nil) {
-                const expression_result = try self.analyseExpression(ast, var_init.expression);
+                const expression_result = try self.analyseExpression(ast, .relativeFrom(statement_node, var_init.expression));
 
                 ir_node = expression_result.ir_node;
 
@@ -319,7 +328,7 @@ pub fn analyseStatement(
                     .null => {
                         try self.errors.append(self.gpa, .{
                             .tag = .type_mismatch,
-                            .anchor = .{ .node = var_init.expression },
+                            .anchor = .{ .node = .relativeFrom(statement_node, var_init.expression) },
                             .data = .{
                                 .type_mismatch = .{
                                     .lhs_type = type_index,
@@ -333,8 +342,8 @@ pub fn analyseStatement(
                     else => |res| res,
                 };
 
-                if (var_init.qualifier == .keyword_const and expression_result.type_index.toData().literal == 1) {
-                    initial_value = try self.resolveConstantExpression(ast, var_init.expression);
+                if (var_init.qualifier.tag == .keyword_const and expression_result.type_index.toData().literal == 1) {
+                    initial_value = try self.resolveConstantExpression(ast, .relativeFrom(statement_node, var_init.expression));
                 }
 
                 ir_node = try self.lowerTypeConversion(
@@ -348,9 +357,10 @@ pub fn analyseStatement(
                 ast,
                 var_init.identifier,
                 type_index,
-                switch (var_init.qualifier) {
+                switch (var_init.qualifier.tag) {
                     .keyword_in => .in,
                     .keyword_const => .constant,
+                    .invalid => .in,
                     else => unreachable,
                 },
                 ir_node,
@@ -358,15 +368,20 @@ pub fn analyseStatement(
             );
         },
         .statement_if => {
-            const statement_if: Ast.Node.StatementIf = ast.dataFromNode(statement_node, .statement_if);
+            const statement_if = statement_node.data(Ast.Node.StatementIf);
 
-            const condition_type = try self.analyseExpression(ast, statement_if.condition_expression);
+            const condition_type = try self.analyseExpression(
+                ast,
+                .relativeFrom(statement_node, statement_if.condition_expression),
+            );
 
             _ = switch (coerceType(.bool, condition_type.type_index)) {
                 .null => {
                     try self.errors.append(self.gpa, .{
                         .tag = .type_mismatch,
-                        .anchor = .{ .node = statement_if.condition_expression },
+                        .anchor = .{
+                            .node = .relativeFrom(statement_node, statement_if.condition_expression),
+                        },
                         .data = .{
                             .type_mismatch = .{
                                 .lhs_type = .bool,
@@ -380,17 +395,27 @@ pub fn analyseStatement(
                 else => |res| res,
             };
 
-            try self.analyseStatement(ast, procedure, statement_if.taken_statement, .{});
-            try self.analyseStatement(ast, procedure, statement_if.not_taken_statement, .{});
+            try self.analyseStatement(
+                ast,
+                procedure,
+                .relativeFrom(statement_node, statement_if.taken_statement),
+                .{},
+            );
+            try self.analyseStatement(
+                ast,
+                procedure,
+                .relativeFrom(statement_node, statement_if.not_taken_statement),
+                .{},
+            );
         },
         .statement_block => {
-            const body = ast.dataFromNode(statement_node, .statement_block);
+            const body = statement_node.data(Ast.Node.StatementBlock);
 
             if (options.block_new_scope) try self.scopePush();
             defer if (options.block_new_scope) self.scopePop();
 
             for (body.statements) |sub_statement| {
-                try self.analyseStatement(ast, procedure, sub_statement, .{});
+                try self.analyseStatement(ast, procedure, .relativeFrom(statement_node, sub_statement), .{});
             }
         },
         .expression_binary_assign,
@@ -404,13 +429,13 @@ pub fn analyseStatement(
             _ = try self.analyseExpression(ast, statement_node);
         },
         .statement_return => {
-            const statement_return: Ast.Node.StatementReturn = ast.dataFromNode(statement_node, .statement_return);
+            const statement_return = statement_node.data(Ast.Node.StatementReturn);
 
             var expr_type: TypeIndex = .void;
             var expr_node: spirv.Ir.Node = .nil;
 
             if (statement_return.expression != Ast.NodeIndex.nil) {
-                const expr_result = try self.analyseExpression(ast, statement_return.expression);
+                const expr_result = try self.analyseExpression(ast, .relativeFrom(statement_node, statement_return.expression));
 
                 expr_type = expr_result.type_index;
                 expr_node = expr_result.ir_node;
@@ -421,7 +446,7 @@ pub fn analyseStatement(
                     try self.errors.append(self.gpa, .{
                         .tag = .type_mismatch,
                         .anchor = if (statement_return.expression != Ast.NodeIndex.nil) .{
-                            .node = statement_return.expression,
+                            .node = .relativeFrom(statement_node, statement_return.expression),
                         } else .{
                             .token = statement_return.return_token,
                         },
@@ -452,13 +477,13 @@ pub fn analyseStatement(
 pub fn resolveProcedure(
     self: *Sema,
     ast: Ast,
-    name: Ast.NodeIndex,
-    param_or_arg_list: Ast.NodeIndex,
+    name: Ast.NodePointer,
+    param_or_arg_list: Ast.NodePointer,
 ) anyerror!*Procedure {
-    const name_data: Ast.Node.Identifier = ast.dataFromNode(name, .expression_identifier);
+    const name_data = name.data(Ast.Node.Identifier);
 
     var type_buffer: [16]TypeIndex = undefined;
-    var arg_node_buffer: [16]Ast.NodeIndex = undefined;
+    var arg_node_buffer: [16]Ast.NodePointer = undefined;
 
     const arg_type_list, const arg_node_list = try self.analyseArgList(
         ast,
@@ -566,27 +591,27 @@ pub fn resolveProcedure(
 pub fn analyseArgList(
     self: *Sema,
     ast: Ast,
-    node: Ast.NodeIndex,
+    node: Ast.NodePointer,
     state: struct {
         type_buffer: []TypeIndex,
-        node_buffer: []Ast.NodeIndex,
+        node_buffer: []Ast.NodePointer,
         base_position: usize = 0,
     },
-) !struct { []TypeIndex, []Ast.NodeIndex } {
+) !struct { []TypeIndex, []Ast.NodePointer } {
     switch (node.tag) {
         .expression_binary_comma => {
-            const binary_comma: Ast.Node.BinaryExpression = ast.dataFromNode(node, .expression_binary_comma);
+            const binary_comma = node.data(Ast.Node.BinaryExpression);
 
             const new_position, _ = try self.analyseArgList(
                 ast,
-                binary_comma.left,
+                .relativeFrom(node, binary_comma.left),
                 .{
                     .type_buffer = state.type_buffer,
                     .node_buffer = state.node_buffer,
                 },
             );
 
-            return try self.analyseArgList(ast, binary_comma.right, .{
+            return try self.analyseArgList(ast, .relativeFrom(node, binary_comma.right), .{
                 .type_buffer = state.type_buffer,
                 .node_buffer = state.node_buffer,
                 .base_position = new_position.len,
@@ -685,8 +710,8 @@ pub fn scopeResolve(self: *Sema, ast: Ast, identifier_token: Ast.TokenIndex) !*I
     return error.UndeclaredIdentifier;
 }
 
-pub fn resolveTypeFromTypeExpr(self: *Sema, ast: Ast, type_expr: Ast.NodeIndex) !TypeIndex {
-    const type_expr_data: Ast.Node.TypeExpr = ast.dataFromNode(type_expr, .type_expr);
+pub fn resolveTypeFromTypeExpr(self: *Sema, ast: Ast, type_expr: Ast.NodePointer) !TypeIndex {
+    const type_expr_data = type_expr.data(Ast.Node.TypeExpr);
 
     return self.resolveTypeFromIdentifier(ast, type_expr_data.token);
 }
@@ -815,7 +840,7 @@ pub const AnalyseExpressionResult = struct {
     ir_node: spirv.Ir.Node,
 };
 
-pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !AnalyseExpressionResult {
+pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !AnalyseExpressionResult {
     switch (expression.tag) {
         .expression_literal_boolean => return .{
             .type_index = .literal_bool,
@@ -823,7 +848,7 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
             .ir_node = .nil,
         },
         .expression_literal_number => {
-            const number_literal_data: Ast.Node.ExpressionLiteralNumber = ast.dataFromNode(expression, .expression_literal_number);
+            const number_literal_data = expression.data(Ast.Node.ExpressionLiteralNumber);
 
             //TODO: optimize this by using a custom parse function which just determines type
             if (std.fmt.parseInt(u64, ast.tokenString(number_literal_data.token), 10)) |int_value| {
@@ -887,10 +912,10 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
         .expression_binary_leql,
         .expression_binary_geql,
         => {
-            const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_add);
+            const binary_expr = expression.data(Ast.Node.BinaryExpression);
 
-            const lhs_type = try self.analyseExpression(ast, binary_expr.left);
-            const rhs_type = try self.analyseExpression(ast, binary_expr.right);
+            const lhs_type = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.left));
+            const rhs_type = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.right));
 
             const comparison_type = switch (coerceType(lhs_type.type_index, rhs_type.type_index)) {
                 .null => {
@@ -938,10 +963,10 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
         .expression_binary_bitwise_shift_left,
         .expression_binary_bitwise_shift_right,
         => {
-            const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_add);
+            const binary_expr = expression.data(Ast.Node.BinaryExpression);
 
-            const lhs = try self.analyseExpression(ast, binary_expr.left);
-            const rhs = try self.analyseExpression(ast, binary_expr.right);
+            const lhs = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.left));
+            const rhs = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.right));
 
             const coerced_type: TypeIndex = switch (expression.tag) {
                 .expression_binary_mul, .expression_binary_div => coerceTypeMul(lhs.type_index, rhs.type_index),
@@ -1009,17 +1034,17 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
         .expression_binary_assign_bitwise_shift_left,
         .expression_binary_assign_bitwise_shift_right,
         => {
-            const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_add);
+            const binary_expr = expression.data(Ast.Node.BinaryExpression);
 
-            const lhs_type = try self.analyseExpression(ast, binary_expr.left);
-            const rhs_type = try self.analyseExpression(ast, binary_expr.right);
+            const lhs_type = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.left));
+            const rhs_type = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.right));
 
-            const assignable = try self.isExpressionAssignable(ast, binary_expr.left);
+            const assignable = try self.isExpressionAssignable(ast, .relativeFrom(expression, binary_expr.left));
 
             if (!assignable) {
                 try self.errors.append(self.gpa, .{
                     .tag = .modified_const,
-                    .anchor = .{ .node = binary_expr.left },
+                    .anchor = .{ .node = .relativeFrom(expression, binary_expr.left) },
                 });
 
                 return error.ModifiedConstant;
@@ -1078,7 +1103,9 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
 
             switch (binary_expr.left.tag) {
                 .expression_identifier => {
-                    const identifier_expression: Ast.Node.Identifier = ast.dataFromNode(binary_expr.left, .expression_identifier);
+                    const binary_lhs: Ast.NodePointer = .relativeFrom(expression, binary_expr.left);
+
+                    const identifier_expression = binary_lhs.data(Ast.Node.Identifier);
 
                     const identifier_def = try self.scopeResolve(ast, identifier_expression.token);
 
@@ -1093,9 +1120,9 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
             };
         },
         .expression_unary_minus => {
-            const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_unary_minus);
+            const binary_expr = expression.data(Ast.Node.BinaryExpression);
 
-            const rhs_type = try self.analyseExpression(ast, binary_expr.right);
+            const rhs_type = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.right));
 
             if (!rhs_type.type_index.isOperatorDefined(expression.tag)) {
                 try self.errors.append(self.gpa, .{
@@ -1124,7 +1151,7 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
             };
         },
         .expression_identifier => {
-            const identifier: Ast.Node.Identifier = ast.dataFromNode(expression, .expression_identifier);
+            const identifier = expression.data(Ast.Node.Identifier);
 
             const definition = try self.scopeResolve(ast, identifier.token);
 
@@ -1146,11 +1173,11 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
             };
         },
         .expression_binary_proc_call => {
-            const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_proc_call);
+            const binary_expr = expression.data(Ast.Node.BinaryExpression);
 
-            const identifier = binary_expr.left;
+            const identifier: Ast.NodePointer = .relativeFrom(expression, binary_expr.left);
 
-            const identifier_data: Ast.Node.Identifier = ast.dataFromNode(identifier, .expression_identifier);
+            const identifier_data = identifier.data(Ast.Node.Identifier);
 
             const type_for_constructor: TypeIndex = self.resolveTypeFromIdentifierNoError(ast, identifier_data.token) orelse .null;
 
@@ -1163,7 +1190,11 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
 
             const arg_list = binary_expr.right;
 
-            const procedure = try self.resolveProcedure(ast, identifier, arg_list);
+            const procedure = try self.resolveProcedure(
+                ast,
+                identifier,
+                .relativeFrom(expression, arg_list),
+            );
 
             return .{
                 .type_index = procedure.general_data.return_type,
@@ -1171,10 +1202,10 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
             };
         },
         .expression_binary_field_access => {
-            const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_field_access);
+            const binary_expr = expression.data(Ast.Node.BinaryExpression);
 
-            const lhs_type = try self.analyseExpression(ast, binary_expr.left);
-            const rhs_identifier: Ast.Node.Identifier = ast.dataFromNode(binary_expr.right, .expression_identifier);
+            const lhs_type = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.left));
+            const rhs_identifier = expression.data(Ast.Node.Identifier);
 
             //TODO: support vectors
             if (lhs_type.type_index.toArrayIndex() == null) {
@@ -1212,16 +1243,16 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
             return error.NoFieldInStruct;
         },
         .expression_binary_array_access => {
-            const binary_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_array_access);
+            const binary_expr = expression.data(Ast.Node.BinaryExpression);
 
-            const lhs_type = try self.analyseExpression(ast, binary_expr.left);
-            const rhs_type = try self.analyseExpression(ast, binary_expr.right);
+            const lhs_type = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.left));
+            const rhs_type = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.right));
 
             if (!lhs_type.type_index.isArray()) {
                 //TODO: throw error
 
                 try self.errors.append(self.gpa, .{
-                    .anchor = .{ .node = binary_expr.left },
+                    .anchor = .{ .node = .relativeFrom(expression, binary_expr.left) },
                     .tag = .expression_not_indexable,
                 });
 
@@ -1229,11 +1260,11 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
             }
 
             if (rhs_type.type_index.toData().literal == 1) {
-                const array_index = try self.resolveConstantExpression(ast, binary_expr.right);
+                const array_index = try self.resolveConstantExpression(ast, .relativeFrom(expression, binary_expr.right));
 
                 if (array_index >= lhs_type.type_index.toData().array_length) {
                     try self.errors.append(self.gpa, .{
-                        .anchor = .{ .node = binary_expr.right },
+                        .anchor = .{ .node = .relativeFrom(expression, binary_expr.right) },
                         .tag = .array_access_out_of_bounds,
                         .data = .{ .array_index_out_of_bounds = .{
                             .array_length = lhs_type.type_index.toData().array_length,
@@ -1254,17 +1285,17 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !Anal
     }
 }
 
-pub fn resolveConstantExpression(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !u64 {
+pub fn resolveConstantExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !u64 {
     switch (expression.tag) {
         .expression_binary_add,
         .expression_binary_sub,
         .expression_binary_mul,
         .expression_binary_div,
         => {
-            const add_expr: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_add);
+            const add_expr = expression.data(Ast.Node.BinaryExpression);
 
-            const lhs = try self.resolveConstantExpression(ast, add_expr.left);
-            const rhs = try self.resolveConstantExpression(ast, add_expr.right);
+            const lhs = try self.resolveConstantExpression(ast, .relativeFrom(expression, add_expr.left));
+            const rhs = try self.resolveConstantExpression(ast, .relativeFrom(expression, add_expr.right));
 
             return switch (expression.tag) {
                 .expression_binary_add => lhs + rhs,
@@ -1275,14 +1306,14 @@ pub fn resolveConstantExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
             };
         },
         .expression_literal_number => {
-            const literal_number_node: Ast.Node.ExpressionLiteralNumber = ast.dataFromNode(expression, .expression_literal_number);
+            const literal_number_node = expression.data(Ast.Node.ExpressionLiteralNumber);
 
             const value = try std.fmt.parseInt(u64, ast.tokenString(literal_number_node.token), 0);
 
             return value;
         },
         .expression_identifier => {
-            const identifier_node: Ast.Node.Identifier = ast.dataFromNode(expression, .expression_identifier);
+            const identifier_node = expression.data(Ast.Node.Identifier);
 
             const resolved_definition = try self.scopeResolve(ast, identifier_node.token);
 
@@ -1293,24 +1324,24 @@ pub fn resolveConstantExpression(self: *Sema, ast: Ast, expression: Ast.NodeInde
 }
 
 ///Returns true if expression is an l-value
-pub fn isExpressionAssignable(self: *Sema, ast: Ast, expression: Ast.NodeIndex) !bool {
+pub fn isExpressionAssignable(self: *Sema, ast: Ast, expression: Ast.NodePointer) !bool {
     switch (expression.tag) {
         .expression_identifier => {
-            const identifier_expression: Ast.Node.Identifier = ast.dataFromNode(expression, .expression_identifier);
+            const identifier_expression = expression.data(Ast.Node.Identifier);
 
             const identifier = try self.scopeResolve(ast, identifier_expression.token);
 
             return identifier.qualifier != .constant;
         },
         .expression_binary_field_access => {
-            const field_access: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_field_access);
+            const field_access = expression.data(Ast.Node.BinaryExpression);
 
-            return self.isExpressionAssignable(ast, field_access.left);
+            return self.isExpressionAssignable(ast, .relativeFrom(expression, field_access.left));
         },
         .expression_binary_array_access => {
-            const array_access: Ast.Node.BinaryExpression = ast.dataFromNode(expression, .expression_binary_array_access);
+            const array_access = expression.data(Ast.Node.BinaryExpression);
 
-            return self.isExpressionAssignable(ast, array_access.left);
+            return self.isExpressionAssignable(ast, .relativeFrom(expression, array_access.left));
         },
         else => return false,
     }
