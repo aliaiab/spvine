@@ -204,13 +204,13 @@ pub fn printErrors(
                 }) catch {};
 
                 writer.writeAll("'") catch {};
-                sema.?.printTypeName(ast, writer, error_value.data.type_mismatch.lhs_type) catch {};
+                sema.?.printTypeName(ast, writer, error_value.data.type_incompatibility.lhs_type) catch {};
                 writer.writeAll("'") catch {};
 
                 writer.writeAll(" and ") catch {};
 
                 writer.writeAll("'") catch {};
-                sema.?.printTypeName(ast, writer, error_value.data.type_mismatch.rhs_type) catch {};
+                sema.?.printTypeName(ast, writer, error_value.data.type_incompatibility.rhs_type) catch {};
                 writer.writeAll("'") catch {};
 
                 writer.writeAll(color_end) catch {};

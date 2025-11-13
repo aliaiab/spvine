@@ -44,7 +44,22 @@ pub fn main() !void {
     const test_glsl = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
     defer allocator.free(test_glsl);
 
-    var ast = try Ast.parse(allocator, test_glsl, test_glsl_path);
+    var ast_node_arena_instance: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+    defer ast_node_arena_instance.deinit();
+
+    //Preinitialize the node arena so we don't hit gpa allocation very often if at all
+    //TODO: figure out some sort of empirically based function based on the length of the source text to estimate the amount of node memory we need
+    _ = try ast_node_arena_instance.allocator().alloc(u8, test_glsl.len * 10);
+    _ = ast_node_arena_instance.reset(.retain_capacity);
+
+    const ast_node_arena = ast_node_arena_instance.allocator();
+
+    var ast = try Ast.parse(
+        allocator,
+        ast_node_arena,
+        test_glsl,
+        test_glsl_path,
+    );
     defer ast.deinit(allocator);
 
     var defines = ast.defines.valueIterator();
@@ -87,7 +102,7 @@ pub fn main() !void {
     defer sema.deinit(allocator);
 
     //Based on the generally correct assumption that the maximum emitted spirv instructions are roughly proportional to the number of ast nodes
-    try sema.spirv_ir.node_buffer.ensureTotalCapacity(allocator, ast.node_heap.allocated_size);
+    // try sema.spirv_ir.node_buffer.ensureTotalCapacity(allocator, ast.node_heap.allocated_size);
 
     sema.spirv_ir.optimization_flags = optimization_flags;
 
@@ -116,14 +131,14 @@ fn printAst(
     gpa: std.mem.Allocator,
     ast: Ast,
     terminated_levels: *std.ArrayList(u8),
-    node: Ast.NodeIndex,
+    node: Ast.NodePointer,
     depth: u32,
     sibling_index: usize,
     sibling_count: usize,
 ) !void {
     const node_tag = node.tag;
 
-    if (node == Ast.NodeIndex.nil) {
+    if (node == Ast.NodePointer.nil) {
         return;
     }
 
@@ -140,14 +155,14 @@ fn printAst(
 
     switch (node_tag) {
         .param_list => {
-            const list = ast.dataFromNode(node, .param_list);
+            const list = node.data(Ast.Node.ParamList);
 
             if (list.params.len == 0) {
                 return;
             }
         },
         .statement_block => {
-            const block = ast.dataFromNode(node, .statement_block);
+            const block = node.data(Ast.Node.StatementBlock);
 
             if (block.statements.len == 0) {
                 return;
@@ -208,7 +223,7 @@ fn printAst(
                     try stderr.print("{s}", .{connecting_string});
                     try stderr.print("{s}", .{if (is_leaf) "──" else "─┬"});
 
-                    const node_data = ast.dataFromNode(node, tag);
+                    const node_data = node.data(std.meta.TagPayload(Ast.Node.Data, tag)).*;
 
                     var sub_sibling_count: usize = 0;
 
@@ -296,7 +311,7 @@ fn printAst(
                                         gpa,
                                         ast,
                                         terminated_levels,
-                                        field_value,
+                                        .relativeFrom(node, field_value),
                                         depth + 1,
                                         sub_sibling_index,
                                         sub_sibling_count,
@@ -310,7 +325,7 @@ fn printAst(
                                         gpa,
                                         ast,
                                         terminated_levels,
-                                        sub_node,
+                                        .relativeFrom(node, sub_node),
                                         depth + 1,
                                         array_sibling_index,
                                         field_value.len,
