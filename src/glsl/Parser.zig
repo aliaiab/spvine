@@ -1,11 +1,13 @@
 //! Implements the syntactic analysis stage of the glsl frontend
 
 gpa: std.mem.Allocator,
+ast_node_arena: std.mem.Allocator,
+scratch_arena: std.mem.Allocator,
 source: []const u8,
 tokenizer: Tokenizer,
 ///Stores a centered slice of the token stream
 ///The centre (token_window[1]) is the current token
-token_window: TokenWindow = [1]Ast.TokenIndex{.invalid} ** 3,
+token_window: TokenWindow = [1]Ast.TokenIndex{.nil} ** 3,
 defines: DefineMap = .{},
 ///This is the generation of #define we're currently on
 define_generation: u32 = 0,
@@ -17,15 +19,19 @@ tokenizer_stack: std.ArrayList(struct {
     define_generation: u32,
 }) = .{},
 errors: std.ArrayList(Ast.Error),
-node_heap: Ast.NodeHeap = .{},
-root_decls: []Ast.NodeIndex,
+//TODO: convert this to an array of NodeIndex (tagged relative pointers)
+root_decls: []Ast.NodePointer,
 
 pub fn init(
-    allocator: std.mem.Allocator,
+    gpa: std.mem.Allocator,
+    ast_node_arena: std.mem.Allocator,
+    scratch_arena: std.mem.Allocator,
     source: []const u8,
 ) Parser {
     return .{
-        .gpa = allocator,
+        .gpa = gpa,
+        .ast_node_arena = ast_node_arena,
+        .scratch_arena = scratch_arena,
         .source = source,
         .tokenizer = Tokenizer.init(source),
         .errors = .{},
@@ -34,18 +40,17 @@ pub fn init(
 }
 
 pub fn deinit(self: *Parser) void {
-    defer self.* = undefined;
-    defer self.errors.deinit(self.gpa);
-    // defer self.node_heap.deinit(self.allocator);
+    self.errors.deinit(self.gpa);
+    self.* = undefined;
 }
 
 ///Root parse node
 pub fn parse(self: *Parser) !void {
-    var root_nodes: std.ArrayList(Ast.NodeIndex) = .{};
+    var root_nodes: std.ArrayList(Ast.NodePointer) = .{};
     defer root_nodes.deinit(self.gpa);
 
     //Init the token window
-    self.token_window[0] = .invalid;
+    self.token_window[0] = .nil;
     self.token_window[1] = try self.advanceTokenizer();
     self.token_window[2] = try self.advanceTokenizer();
 
@@ -109,9 +114,8 @@ pub fn parse(self: *Parser) !void {
     self.root_decls = try root_nodes.toOwnedSlice(self.gpa);
 }
 
-pub fn parseStruct(self: *Parser) !Ast.NodeIndex {
-    var node_index = try self.reserveNode(.struct_definition);
-    errdefer self.unreserveNode(node_index);
+pub fn parseStruct(self: *Parser) !Ast.NodePointer {
+    var struct_node = try self.allocateNode(.struct_definition);
 
     _ = try self.expectToken(.keyword_struct);
 
@@ -120,39 +124,38 @@ pub fn parseStruct(self: *Parser) !Ast.NodeIndex {
     _ = try self.expectToken(.left_brace);
 
     var field_nodes: std.ArrayList(Ast.NodeIndex) = .{};
-    defer field_nodes.deinit(self.gpa);
+    defer field_nodes.deinit(self.scratch_arena);
 
     while (self.peekTokenTag().? != .right_brace) {
         const field_type = try self.parseTypeExpr();
 
         const field_name = try self.expectToken(.identifier);
 
-        var struct_field_node = try self.reserveNode(.struct_field);
+        var struct_field_node = try self.allocateNode(.struct_field);
 
-        try self.nodeSetData(&struct_field_node, .struct_field, .{
+        struct_field_node.data(Ast.Node.StructField).* = .{
             .name = field_name,
-            .type_expr = field_type,
-        });
+            .type_expr = .relativeTo(struct_field_node, field_type),
+        };
 
-        try field_nodes.append(self.gpa, struct_field_node);
+        try field_nodes.append(self.scratch_arena, .relativeTo(struct_node, struct_field_node));
 
         _ = try self.expectToken(.semicolon);
     }
 
-    try self.nodeSetData(&node_index, .struct_definition, .{
+    struct_node.data(Ast.Node.StructDefinition).* = .{
         .name = struct_name_identifier,
-        .fields = try self.node_heap.allocateDupe(self.gpa, Ast.NodeIndex, field_nodes.items),
-    });
+        .fields = try self.ast_node_arena.dupe(Ast.NodeIndex, field_nodes.items),
+    };
 
     _ = try self.expectToken(.right_brace);
     _ = try self.expectToken(.semicolon);
 
-    return node_index;
+    return struct_node;
 }
 
-pub fn parseProcedure(self: *Parser) !Ast.NodeIndex {
-    var node_index = try self.reserveNode(.procedure);
-    errdefer self.unreserveNode(node_index);
+pub fn parseProcedure(self: *Parser) !Ast.NodePointer {
+    var procedure_node = try self.allocateNode(.procedure);
 
     const type_expr = try self.parseTypeExpr();
 
@@ -164,7 +167,7 @@ pub fn parseProcedure(self: *Parser) !Ast.NodeIndex {
 
     _ = try self.expectToken(.right_paren);
 
-    var body = Ast.NodeIndex.nil;
+    var body: Ast.NodePointer = .nil;
 
     if (self.peekTokenTag() == .left_brace) {
         body = try self.parseStatement();
@@ -172,19 +175,18 @@ pub fn parseProcedure(self: *Parser) !Ast.NodeIndex {
         _ = try self.expectToken(.semicolon);
     }
 
-    try self.nodeSetData(&node_index, .procedure, .{
-        .return_type = type_expr,
+    procedure_node.data(Ast.Node.Procedure).* = .{
+        .return_type = .relativeTo(procedure_node, type_expr),
         .name = identifier,
-        .param_list = param_list,
-        .body = body,
-    });
+        .param_list = .relativeTo(procedure_node, param_list),
+        .body = .relativeTo(procedure_node, body),
+    };
 
-    return node_index;
+    return procedure_node;
 }
 
-pub fn parseParamList(self: *Parser) !Ast.NodeIndex {
-    var node = try self.reserveNode(.param_list);
-    errdefer self.unreserveNode(node);
+pub fn parseParamList(self: *Parser) !Ast.NodePointer {
+    var param_list_node = try self.allocateNode(.param_list);
 
     var param_nodes: std.ArrayList(Ast.NodeIndex) = .{};
     defer param_nodes.deinit(self.gpa);
@@ -192,40 +194,39 @@ pub fn parseParamList(self: *Parser) !Ast.NodeIndex {
     while (self.peekTokenTag().? != .right_paren) {
         const param = try self.parseParam();
 
-        try param_nodes.append(self.gpa, param);
+        try param_nodes.append(self.gpa, .relativeTo(param_list_node, param));
 
         if (self.lookAheadTokenTag(1) != .right_paren) {
             _ = try self.eatToken(.comma);
         }
     }
 
-    try self.nodeSetData(&node, .param_list, .{
-        .params = try self.node_heap.allocateDupe(self.gpa, Ast.NodeIndex, param_nodes.items),
-    });
+    param_list_node.data(Ast.Node.ParamList).* = .{
+        .params = try self.ast_node_arena.dupe(Ast.NodeIndex, param_nodes.items),
+    };
 
-    return node;
+    return param_list_node;
 }
 
-pub fn parseParam(self: *Parser) !Ast.NodeIndex {
-    var node = try self.reserveNode(.param_expr);
-    errdefer self.unreserveNode(node);
+pub fn parseParam(self: *Parser) !Ast.NodePointer {
+    var param_expr_node = try self.allocateNode(.param_expr);
 
-    const qualifier: Token.Tag = try self.eatVariableQualifier();
+    const qualifier: Ast.TokenIndex = try self.parseVariableQualifier();
 
     const type_expr = try self.parseTypeExpr();
     const param_identifier = try self.expectToken(.identifier);
 
-    try self.nodeSetData(&node, .param_expr, .{
-        .type_expr = type_expr,
+    param_expr_node.data(Ast.Node.ParamExpr).* = .{
+        .type_expr = .relativeTo(param_expr_node, type_expr),
         .name = param_identifier,
         .qualifier = qualifier,
-    });
+    };
 
-    return node;
+    return param_expr_node;
 }
 
-pub fn eatVariableQualifier(self: *Parser) !Token.Tag {
-    var qualifier: Token.Tag = .keyword_in;
+pub fn parseVariableQualifier(self: *Parser) !Ast.TokenIndex {
+    var qualifier: Ast.TokenIndex = .nil;
 
     const first_in_qualifier = try self.eatToken(.keyword_in);
 
@@ -234,10 +235,8 @@ pub fn eatVariableQualifier(self: *Parser) !Token.Tag {
         .keyword_out,
         .keyword_in,
         .keyword_const,
-        => |tag| {
-            qualifier = tag;
-
-            _ = try self.nextToken();
+        => {
+            qualifier = try self.nextToken();
         },
         else => {},
     }
@@ -249,32 +248,31 @@ pub fn eatVariableQualifier(self: *Parser) !Token.Tag {
     return qualifier;
 }
 
-pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
+pub fn parseStatement(self: *Parser) !Ast.NodePointer {
     switch (self.peekTokenTag().?) {
         .left_brace => {
-            var node = try self.reserveNode(.statement_block);
-            errdefer self.unreserveNode(node);
+            var statement_block_node = try self.allocateNode(.statement_block);
 
             _ = try self.nextToken();
 
             var statements: std.ArrayList(Ast.NodeIndex) = .{};
-            defer statements.deinit(self.gpa);
+            defer statements.deinit(self.scratch_arena);
 
             while (self.peekTokenTag().? != .right_brace) {
                 const statement = try self.parseStatement();
 
-                if (statement == Ast.NodeIndex.nil) continue;
+                if (statement == Ast.NodePointer.nil) continue;
 
-                try statements.append(self.gpa, statement);
+                try statements.append(self.scratch_arena, .relativeTo(statement_block_node, statement));
             }
 
             _ = try self.expectToken(.right_brace);
 
-            try self.nodeSetData(&node, .statement_block, .{
-                .statements = try self.node_heap.allocateDupe(self.gpa, Ast.NodeIndex, statements.items),
-            });
+            statement_block_node.data(Ast.Node.StatementBlock).* = .{
+                .statements = try self.ast_node_arena.dupe(Ast.NodeIndex, statements.items),
+            };
 
-            return node;
+            return statement_block_node;
         },
         .left_paren => {
             return self.parseExpression(.{});
@@ -325,7 +323,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
 
                 if (next_token != .end_of_file) {
                     if (next_token != .identifier) {
-                        const expr = self.parseExpression(.{});
+                        const expr = try self.parseExpression(.{});
 
                         _ = try self.eatToken(.semicolon);
 
@@ -334,10 +332,9 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
                 }
             }
 
-            var node = try self.reserveNode(.statement_var_init);
-            errdefer self.unreserveNode(node);
+            var var_init_node = try self.allocateNode(.statement_var_init);
 
-            const qualifier = try self.eatVariableQualifier();
+            const qualifier = try self.parseVariableQualifier();
 
             const type_expr = try self.parseTypeExpr();
 
@@ -345,7 +342,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
 
             const array_left_bracket = try self.eatToken(.left_bracket);
 
-            var array_length_specifier: Ast.NodeIndex = .nil;
+            var array_length_specifier: Ast.NodePointer = .nil;
 
             if (array_left_bracket != null) {
                 //TODO: I don't know if parsing this an expression is too lenient.
@@ -357,27 +354,21 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
                 _ = try self.expectToken(.right_bracket);
             }
 
-            if (try self.eatToken(.equals) != null) {
-                const expression = try self.parseExpression(.{});
+            var expression: Ast.NodePointer = .nil;
 
-                try self.nodeSetData(&node, .statement_var_init, .{
-                    .type_expr = type_expr,
-                    .array_length_specifier = array_length_specifier,
-                    .identifier = variable_name,
-                    .expression = expression,
-                    .qualifier = qualifier,
-                });
-            } else {
-                try self.nodeSetData(&node, .statement_var_init, .{
-                    .type_expr = type_expr,
-                    .array_length_specifier = array_length_specifier,
-                    .identifier = variable_name,
-                    .qualifier = qualifier,
-                    .expression = Ast.NodeIndex.nil,
-                });
+            if (try self.eatToken(.equals) != null) {
+                expression = try self.parseExpression(.{});
             }
 
-            return node;
+            var_init_node.data(Ast.Node.StatementVarInit).* = .{
+                .type_expr = .relativeTo(var_init_node, type_expr),
+                .array_length_specifier = .relativeTo(var_init_node, array_length_specifier),
+                .identifier = variable_name,
+                .expression = .relativeTo(var_init_node, expression),
+                .qualifier = qualifier,
+            };
+
+            return var_init_node;
         },
         .literal_number,
         => {
@@ -397,8 +388,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
         .keyword_if => {
             const if_token = try self.expectToken(.keyword_if);
 
-            var node = try self.reserveNode(.statement_if);
-            errdefer self.unreserveNode(node);
+            var if_node = try self.allocateNode(.statement_if);
 
             _ = try self.expectToken(.left_paren);
 
@@ -408,7 +398,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
 
             const taken_statment = try self.parseStatement();
 
-            var not_taken_statment = Ast.NodeIndex.nil;
+            var not_taken_statment = Ast.NodePointer.nil;
 
             const else_keyword = try self.eatToken(.keyword_else);
 
@@ -416,22 +406,21 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
                 not_taken_statment = try self.parseStatement();
             }
 
-            try self.nodeSetData(&node, .statement_if, .{
+            if_node.data(Ast.Node.StatementIf).* = .{
                 .if_token = if_token,
-                .condition_expression = cond_expr,
-                .taken_statement = taken_statment,
-                .not_taken_statement = not_taken_statment,
-            });
+                .condition_expression = .relativeTo(if_node, cond_expr),
+                .taken_statement = .relativeTo(if_node, taken_statment),
+                .not_taken_statement = .relativeTo(if_node, not_taken_statment),
+            };
 
-            return node;
+            return if_node;
         },
         .keyword_return => {
             const keyword_return = try self.nextToken();
 
-            var node = try self.reserveNode(.statement_return);
-            errdefer self.unreserveNode(node);
+            var return_node = try self.allocateNode(.statement_return);
 
-            var expression: Ast.NodeIndex = Ast.NodeIndex.nil;
+            var expression: Ast.NodePointer = .nil;
 
             if (self.peekTokenTag().? != .semicolon) {
                 expression = try self.parseExpression(.{});
@@ -439,35 +428,34 @@ pub fn parseStatement(self: *Parser) !Ast.NodeIndex {
 
             _ = try self.expectToken(.semicolon);
 
-            try self.nodeSetData(&node, .statement_return, .{
-                .expression = expression,
+            return_node.data(Ast.Node.StatementReturn).* = .{
+                .expression = .relativeTo(return_node, expression),
                 .return_token = keyword_return,
-            });
+            };
 
-            return node;
+            return return_node;
         },
         .semicolon => {
             _ = try self.nextToken();
-            return Ast.NodeIndex.nil;
+            return .nil;
         },
         else => return self.unexpectedToken(),
     }
 
-    return Ast.NodeIndex.nil;
+    return .nil;
 }
 
 pub fn parseExpression(
     self: *Parser,
     context: struct {
         min_precedence: i32 = std.math.minInt(i32),
-        left: Ast.NodeIndex = Ast.NodeIndex.nil,
+        left: Ast.NodePointer = Ast.NodePointer.nil,
     },
-) anyerror!Ast.NodeIndex {
+) anyerror!Ast.NodePointer {
     var lhs = context.left;
 
     while (true) {
-        var node = Ast.NodeIndex.nil;
-        errdefer if (node != Ast.NodeIndex.nil) self.unreserveNode(node);
+        var node = Ast.NodePointer.nil;
 
         const binary = struct {
             pub inline fn getPrecedence(comptime node_tag: Ast.Node.Tag) i32 {
@@ -548,45 +536,45 @@ pub fn parseExpression(
         switch (self.peekTokenTag().?) {
             .literal_number,
             => {
-                if (lhs != Ast.NodeIndex.nil and !binary.isBinaryExpression(self.previousTokenTag())) {
+                if (lhs != Ast.NodePointer.nil and !binary.isBinaryExpression(self.previousTokenTag())) {
                     return self.unexpectedToken();
                 }
 
-                node = try self.reserveNode(.expression_literal_number);
+                node = try self.allocateNode(.expression_literal_number);
 
                 const literal = try self.nextToken();
 
-                try self.nodeSetData(&node, .expression_literal_number, .{
+                node.data(Ast.Node.ExpressionLiteralNumber).* = .{
                     .token = literal,
-                });
+                };
             },
             .keyword_true,
             .keyword_false,
             => {
-                if (lhs != Ast.NodeIndex.nil and !binary.isBinaryExpression(self.previousTokenTag())) {
+                if (lhs != Ast.NodePointer.nil and !binary.isBinaryExpression(self.previousTokenTag())) {
                     return self.unexpectedToken();
                 }
 
-                node = try self.reserveNode(.expression_literal_boolean);
+                node = try self.allocateNode(.expression_literal_boolean);
 
                 const literal = try self.nextToken();
 
-                try self.nodeSetData(&node, .expression_literal_boolean, .{
+                node.data(Ast.Node.LiteralBoolean).* = .{
                     .token = literal,
-                });
+                };
             },
             .identifier => {
-                if (lhs != Ast.NodeIndex.nil and !binary.isBinaryExpression(self.previousTokenTag())) {
+                if (lhs != Ast.NodePointer.nil and !binary.isBinaryExpression(self.previousTokenTag())) {
                     return self.unexpectedToken();
                 }
 
-                node = try self.reserveNode(.expression_literal_number);
+                node = try self.allocateNode(.expression_identifier);
 
                 const identifier = try self.expectToken(.identifier);
 
-                try self.nodeSetData(&node, .expression_identifier, .{
+                node.data(Ast.Node.Identifier).* = .{
                     .token = identifier,
-                });
+                };
             },
             .keyword_int,
             .keyword_uint,
@@ -629,17 +617,17 @@ pub fn parseExpression(
             .keyword_dmat3x2,
             .keyword_dmat4x3,
             => {
-                if (lhs != Ast.NodeIndex.nil and !binary.isBinaryExpression(self.previousTokenTag())) {
+                if (lhs != Ast.NodePointer.nil and !binary.isBinaryExpression(self.previousTokenTag())) {
                     return self.unexpectedToken();
                 }
 
-                node = try self.reserveNode(.expression_identifier);
+                node = try self.allocateNode(.expression_identifier);
 
                 const keyword_token: Ast.TokenIndex = try self.nextToken();
 
-                try self.nodeSetData(&node, .expression_identifier, .{
+                node.data(Ast.Node.Identifier).* = .{
                     .token = keyword_token,
-                });
+                };
             },
             .left_paren => {
                 const open_paren = try self.eatToken(.left_paren);
@@ -653,15 +641,15 @@ pub fn parseExpression(
                 switch (lhs.tag) {
                     .expression_identifier,
                     => {
-                        const identifier_data: Ast.Node.Identifier = self.node_heap.getNodePtrConst(.expression_identifier, lhs.index).*;
+                        const identifier_data = lhs.data(Ast.Node.Identifier).*;
 
-                        var sub_node = try self.reserveNode(.expression_binary_proc_call);
+                        var sub_node = try self.allocateNode(.expression_binary_proc_call);
 
-                        try self.nodeSetData(&sub_node, .expression_binary_proc_call, .{
+                        sub_node.data(Ast.Node.BinaryExpression).* = .{
                             .op_token = identifier_data.token,
-                            .left = lhs,
-                            .right = node,
-                        });
+                            .left = .relativeTo(sub_node, lhs),
+                            .right = .relativeTo(sub_node, node),
+                        };
 
                         node = sub_node;
                     },
@@ -684,15 +672,15 @@ pub fn parseExpression(
                 switch (lhs.tag) {
                     .expression_identifier,
                     => {
-                        const identifier_data: Ast.Node.Identifier = self.node_heap.getNodePtrConst(.expression_identifier, lhs.index).*;
+                        const identifier_data = lhs.data(Ast.Node.Identifier);
 
-                        var sub_node = try self.reserveNode(.expression_binary_array_access);
+                        var sub_node = try self.allocateNode(.expression_binary_array_access);
 
-                        try self.nodeSetData(&sub_node, .expression_binary_array_access, .{
+                        sub_node.data(Ast.Node.BinaryExpression).* = .{
                             .op_token = identifier_data.token,
-                            .left = lhs,
-                            .right = node,
-                        });
+                            .left = .relativeTo(sub_node, lhs),
+                            .right = .relativeTo(sub_node, node),
+                        };
 
                         node = sub_node;
                     },
@@ -718,24 +706,17 @@ pub fn parseExpression(
                             .min_precedence = prec,
                         });
 
-                        var sub_node = try self.reserveNode(binary_node_type);
+                        var sub_node = try self.allocateNode(binary_node_type);
 
                         @setEvalBranchQuota(1000000);
 
-                        try self.nodeSetData(&sub_node, binary_node_type, .{
+                        sub_node.data(Ast.Node.BinaryExpression).* = .{
                             .op_token = op_token,
-                            .left = lhs,
-                            .right = rhs,
-                        });
+                            .left = .relativeTo(sub_node, lhs),
+                            .right = .relativeTo(sub_node, rhs),
+                        };
 
                         node = sub_node;
-
-                        // switch (tag) {
-                        // .left_bracket => {
-                        // _ = try self.expectToken(.right_bracket);
-                        // },
-                        // else => {},
-                        // }
                     }
                 } else {
                     break;
@@ -749,7 +730,7 @@ pub fn parseExpression(
     return lhs;
 }
 
-pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
+pub fn parseTypeExpr(self: *Parser) !Ast.NodePointer {
     switch (self.peekToken().tag) {
         .keyword_float,
         .keyword_double,
@@ -791,10 +772,9 @@ pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
         .keyword_void,
         .identifier,
         => {
-            var node = try self.reserveNode(.type_expr);
-            errdefer self.unreserveNode(node);
+            var node = try self.allocateNode(.type_expr);
 
-            try self.nodeSetData(&node, .type_expr, .{ .token = self.peekToken() });
+            node.data(Ast.Node.TypeExpr).* = .{ .token = self.peekToken() };
 
             _ = try self.nextToken();
 
@@ -806,17 +786,15 @@ pub fn parseTypeExpr(self: *Parser) !Ast.NodeIndex {
     unreachable;
 }
 
-pub fn reserveNode(self: *Parser, comptime tag: Ast.Node.Tag) !Ast.NodeIndex {
-    const node_index = try self.node_heap.allocateNode(self.gpa, tag);
+pub fn allocateNode(self: *Parser, comptime tag: Ast.Node.Tag) !Ast.NodePointer {
+    const NodeData = std.meta.TagPayload(Ast.Node.Data, tag);
+
+    const ptr = try self.ast_node_arena.create(NodeData);
 
     return .{
         .tag = tag,
-        .index = node_index,
+        .data_ptr = std.mem.asBytes(ptr).ptr,
     };
-}
-
-pub fn unreserveNode(self: *Parser, node: Ast.NodeIndex) void {
-    self.node_heap.freeNode(node);
 }
 
 pub fn nodeSetData(

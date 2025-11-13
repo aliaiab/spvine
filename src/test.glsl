@@ -14,25 +14,13 @@ struct Lol {
 #define f32 float32_t
 #define u32 uint32_t
 
-Lol hash1(f32 n) {
-    #if 0
-        // hash by Hugo Elias
-        n = (n << 13) ^ n;
-    #endif 
+u32 hash1(u32 n) {
+    // n = (n << 13) ^ n;
 
-    #ifdef SOME_CONST
-
-    // return n * (n * n * 15731 + 789221) + 1376312589;
-    n = SOME_CONST;
-
-    #elif
-        #error SOME_CONST not defined!
-    #endif
-
-    return n;
+    return n * (n * n * 15731 + 789221) + 1376312589;
 }
 
-#if 1
+#if 0
 
 #if 0
 #error oh dear....
@@ -52,34 +40,5 @@ float sdCone(vec3 p, vec2 c, float h) {
     float s = max( k*(w.x*q.y-w.y*q.x),k*(w.y-q.y)  );
     return sqrt(d)*sign(s);
 }
-// #error fuck and shit
 #endif
 
-#if 1
-uint arrayTest(uint x) {
-    const uint one_hundred = 100;
-    #if 1
-        const uint constant_test = 3 + one_hundred * 2;
-    #elif 
-        const uint constant_test = 1;
-    #endif
-
-    const uint lol_array_len = 1 * (4 + 3 * 7);
-
-    Lol array[one_hundred];
-    uint larger_array[11];
-    uint non_array = 1;
-
-    array[1 - 1].lol = 1;
-
-    // larger_array[9 + constant_test] = x;
-    // non_array[2] = 3;
-
-    array[2] = larger_array[1];
-
-    // array = larger_array;
-
-    // return array[4];
-    return array[2];
-}
-#endif
