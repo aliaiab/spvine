@@ -11,7 +11,7 @@ source_index: usize = 0,
 tokenizer: Tokenizer,
 ///Stores a centered slice of the token stream
 ///The centre (token_window[1]) is the current token
-token_window: TokenWindow = [1]Ast.TokenIndex{.nil} ** 3,
+token_window: TokenWindow = undefined,
 defines: DefineMap = .{},
 ///This is the generation of #define we're currently on
 define_generation: u32 = 0,
@@ -24,7 +24,6 @@ tokenizer_stack: std.ArrayList(struct {
     source_index: usize,
 }) = .{},
 errors: std.ArrayList(Ast.Error),
-//TODO: convert this to an array of NodeIndex (tagged relative pointers)
 root_decls: []Ast.NodePointer,
 
 pub fn init(
@@ -66,8 +65,10 @@ pub fn parse(self: *Parser) !void {
 
     //Init the token window
     self.token_window[0] = .nil;
-    self.token_window[1] = try self.advanceTokenizer();
-    self.token_window[2] = try self.advanceTokenizer();
+
+    for (self.token_window[1..]) |*token| {
+        token.* = try self.advanceTokenizer();
+    }
 
     while (self.peekToken().tag != .end_of_file) {
         switch (self.peekToken().tag) {
@@ -76,44 +77,6 @@ pub fn parse(self: *Parser) !void {
 
                 try root_nodes.append(self.gpa, struct_def);
             },
-            .keyword_float,
-            .keyword_double,
-            .keyword_uint,
-            .keyword_int,
-            .keyword_bool,
-            .keyword_vec2,
-            .keyword_vec3,
-            .keyword_vec4,
-            .keyword_ivec2,
-            .keyword_ivec3,
-            .keyword_ivec4,
-            .keyword_uvec2,
-            .keyword_uvec3,
-            .keyword_uvec4,
-            .keyword_bvec2,
-            .keyword_bvec3,
-            .keyword_bvec4,
-            .keyword_dvec2,
-            .keyword_dvec3,
-            .keyword_dvec4,
-            .keyword_mat2x2,
-            .keyword_mat3x3,
-            .keyword_mat4x4,
-            .keyword_mat2x3,
-            .keyword_mat3x4,
-            .keyword_mat3x2,
-            .keyword_mat4x3,
-            .keyword_dmat2,
-            .keyword_dmat3,
-            .keyword_dmat4,
-            .keyword_dmat2x2,
-            .keyword_dmat3x3,
-            .keyword_dmat4x4,
-            .keyword_dmat2x3,
-            .keyword_dmat3x4,
-            .keyword_dmat3x2,
-            .keyword_dmat4x3,
-            .keyword_void,
             .identifier,
             => {
                 const proc = try self.parseProcedure();
@@ -293,44 +256,6 @@ pub fn parseStatement(self: *Parser) !Ast.NodePointer {
             return self.parseExpression(.{});
         },
         .keyword_const,
-        .keyword_float,
-        .keyword_double,
-        .keyword_uint,
-        .keyword_int,
-        .keyword_bool,
-        .keyword_vec2,
-        .keyword_vec3,
-        .keyword_vec4,
-        .keyword_ivec2,
-        .keyword_ivec3,
-        .keyword_ivec4,
-        .keyword_uvec2,
-        .keyword_uvec3,
-        .keyword_uvec4,
-        .keyword_bvec2,
-        .keyword_bvec3,
-        .keyword_bvec4,
-        .keyword_dvec2,
-        .keyword_dvec3,
-        .keyword_dvec4,
-        .keyword_mat2x2,
-        .keyword_mat3x3,
-        .keyword_mat4x4,
-        .keyword_mat2x3,
-        .keyword_mat3x4,
-        .keyword_mat3x2,
-        .keyword_mat4x3,
-        .keyword_dmat2,
-        .keyword_dmat3,
-        .keyword_dmat4,
-        .keyword_dmat2x2,
-        .keyword_dmat3x3,
-        .keyword_dmat4x4,
-        .keyword_dmat2x3,
-        .keyword_dmat3x4,
-        .keyword_dmat3x2,
-        .keyword_dmat4x3,
-        .keyword_void,
         .identifier,
         => |token_tag| {
             if (token_tag == .identifier) {
@@ -591,59 +516,6 @@ pub fn parseExpression(
                     .token = identifier,
                 };
             },
-            .keyword_int,
-            .keyword_uint,
-            .keyword_float,
-            .keyword_double,
-            .keyword_bool,
-            .keyword_vec2,
-            .keyword_vec3,
-            .keyword_vec4,
-            .keyword_ivec2,
-            .keyword_ivec3,
-            .keyword_ivec4,
-            .keyword_uvec2,
-            .keyword_uvec3,
-            .keyword_uvec4,
-            .keyword_bvec2,
-            .keyword_bvec3,
-            .keyword_bvec4,
-            .keyword_dvec2,
-            .keyword_dvec3,
-            .keyword_dvec4,
-            .keyword_mat2,
-            .keyword_mat3,
-            .keyword_mat4,
-            .keyword_mat2x2,
-            .keyword_mat3x3,
-            .keyword_mat4x4,
-            .keyword_mat2x3,
-            .keyword_mat3x4,
-            .keyword_mat3x2,
-            .keyword_mat4x3,
-            .keyword_dmat2,
-            .keyword_dmat3,
-            .keyword_dmat4,
-            .keyword_dmat2x2,
-            .keyword_dmat3x3,
-            .keyword_dmat4x4,
-            .keyword_dmat2x3,
-            .keyword_dmat3x4,
-            .keyword_dmat3x2,
-            .keyword_dmat4x3,
-            => {
-                if (lhs != Ast.NodePointer.nil and !binary.isBinaryExpression(self.previousTokenTag())) {
-                    return self.unexpectedToken();
-                }
-
-                node = try self.allocateNode(.expression_identifier);
-
-                const keyword_token: Ast.TokenIndex = try self.nextToken();
-
-                node.data(Ast.Node.Identifier).* = .{
-                    .token = keyword_token,
-                };
-            },
             .left_paren => {
                 const open_paren = try self.eatToken(.left_paren);
 
@@ -747,44 +619,6 @@ pub fn parseExpression(
 
 pub fn parseTypeExpr(self: *Parser) !Ast.NodePointer {
     switch (self.peekToken().tag) {
-        .keyword_float,
-        .keyword_double,
-        .keyword_uint,
-        .keyword_int,
-        .keyword_bool,
-        .keyword_vec2,
-        .keyword_vec3,
-        .keyword_vec4,
-        .keyword_ivec2,
-        .keyword_ivec3,
-        .keyword_ivec4,
-        .keyword_uvec2,
-        .keyword_uvec3,
-        .keyword_uvec4,
-        .keyword_bvec2,
-        .keyword_bvec3,
-        .keyword_bvec4,
-        .keyword_dvec2,
-        .keyword_dvec3,
-        .keyword_dvec4,
-        .keyword_mat2x2,
-        .keyword_mat3x3,
-        .keyword_mat4x4,
-        .keyword_mat2x3,
-        .keyword_mat3x4,
-        .keyword_mat3x2,
-        .keyword_mat4x3,
-        .keyword_dmat2,
-        .keyword_dmat3,
-        .keyword_dmat4,
-        .keyword_dmat2x2,
-        .keyword_dmat3x3,
-        .keyword_dmat4x4,
-        .keyword_dmat2x3,
-        .keyword_dmat3x4,
-        .keyword_dmat3x2,
-        .keyword_dmat4x3,
-        .keyword_void,
         .identifier,
         => {
             var node = try self.allocateNode(.type_expr);
@@ -858,19 +692,18 @@ pub fn eatToken(self: *Parser, tag: Token.Tag) !?Ast.TokenIndex {
     }
 }
 
+///Advances the token window forward, returning the next logical token
 pub fn nextToken(self: *Parser) !Ast.TokenIndex {
-    //window: previous current next
-    //new window: current next next + 1
-
     const current_window = self.token_window;
 
-    self.token_window[0] = current_window[1];
-    self.token_window[1] = current_window[2];
+    for (0..current_window.len - 1) |i| {
+        self.token_window[i] = current_window[1 + i];
+    }
 
     //TODO: handle this error
     const token = try self.advanceTokenizer();
 
-    self.token_window[2] = token;
+    self.token_window[current_window.len - 1] = token;
 
     return current_window[1];
 }
@@ -910,7 +743,27 @@ pub fn lookAheadToken(self: Parser, comptime amount: comptime_int) Ast.TokenInde
     return self.token_window[1 + amount];
 }
 
-pub fn pushTokenizerState(self: *Parser, new_source_range: Ast.SourceStringRange, new_define_generation: u32) !void {
+pub fn tokenString(self: *Parser, token_index: Ast.TokenIndex) []const u8 {
+    const token_start = token_index.string_start;
+    const token_end = token_index.string_start + token_index.string_length;
+
+    const source = self.sources.items[token_index.file_index];
+
+    return source[token_start..token_end];
+}
+
+pub fn tokenizerConsume(self: *Parser) !Ast.TokenIndex {
+    const token = self.tokenizer.next() orelse return self.unexpectedToken();
+
+    return .fromToken(
+        self.source_index,
+        self.sources.items[self.source_index],
+        self.tokenizer.source,
+        token,
+    );
+}
+
+fn pushTokenizerState(self: *Parser, new_source_range: Ast.SourceStringRange, new_define_generation: u32) !void {
     const saved_state = try self.tokenizer_stack.addOne(self.gpa);
 
     saved_state.define_generation = self.define_generation;
@@ -922,7 +775,7 @@ pub fn pushTokenizerState(self: *Parser, new_source_range: Ast.SourceStringRange
     self.source_index = new_source_range.file_index;
 }
 
-pub fn popTokenizerState(self: *Parser) !void {
+fn popTokenizerState(self: *Parser) !void {
     const old_state = self.tokenizer_stack.pop() orelse return;
 
     self.define_generation = old_state.define_generation;
@@ -930,288 +783,309 @@ pub fn popTokenizerState(self: *Parser) !void {
     self.source_index = old_state.source_index;
 }
 
-pub fn advanceTokenizer(self: *Parser) anyerror!Ast.TokenIndex {
-    while (self.tokenizer.next()) |token| {
-        switch (token.tag) {
-            .invalid => {
-                try self.errors.append(self.gpa, .{
-                    .tag = .invalid_token,
-                    .anchor = .{ .token = .fromToken(self.source_index, self.sources.items[self.source_index], self.tokenizer.source, token) },
-                });
+fn advanceTokenizer(self: *Parser) !Ast.TokenIndex {
+    while (true) {
+        while (self.tokenizer.next()) |token| {
+            switch (token.tag) {
+                .invalid => {
+                    try self.errors.append(self.gpa, .{
+                        .tag = .invalid_token,
+                        .anchor = .{ .token = .fromToken(self.source_index, self.sources.items[self.source_index], self.tokenizer.source, token) },
+                    });
 
-                return .fromToken(self.source_index, self.sources.items[self.source_index], self.tokenizer.source, token);
-            },
-            .reserved_keyword => {
-                try self.errors.append(self.gpa, .{
-                    .tag = .reserved_keyword_token,
-                    .anchor = .{ .token = .fromToken(self.source_index, self.sources.items[self.source_index], self.tokenizer.source, token) },
-                });
+                    return .fromToken(self.source_index, self.sources.items[self.source_index], self.tokenizer.source, token);
+                },
+                .directive_version => {
+                    const string = "__VERSION__";
 
-                return .fromToken(self.source_index, self.sources.items[self.source_index], self.tokenizer.source, token);
-            },
-            .directive_version => {
-                const string = "__VERSION__";
+                    const define = self.defines.getOrPut(self.gpa, string) catch unreachable;
+                    _ = define; // autofix
 
-                const define = self.defines.getOrPut(self.gpa, string) catch unreachable;
-                _ = define; // autofix
+                    const next_token = self.tokenizer.next();
+                    _ = next_token; // autofix
 
-                const next_token = self.tokenizer.next();
-                _ = next_token; // autofix
+                    //TODO: add expected literal number error here
+                    //TODO: handle the defining of __VERSION__
 
-                //TODO: add expected literal number error here
-                //TODO: handle the defining of __VERSION__
+                    // define.value_ptr.start_token = .fromToken(next_token.?);
+                },
+                .directive_include => {
+                    const string_token = self.tokenizer.next() orelse {
+                        @panic("Expected string literal");
+                    };
 
-                // define.value_ptr.start_token = .fromToken(next_token.?);
-            },
-            .directive_include => {
-                const string_token = self.tokenizer.next() orelse {
-                    @panic("Expected string literal");
-                };
+                    std.debug.assert(string_token.tag == .literal_string);
 
-                std.debug.assert(string_token.tag == .literal_string);
+                    const dir_name = std.fs.path.dirname(self.source_map.keys()[0]).?;
 
-                const dir_name = std.fs.path.dirname(self.source_map.keys()[0]).?;
+                    const include_path: []const u8 = self.sources.items[self.source_index][string_token.start + 1 .. string_token.end - 1];
 
-                const include_path: []const u8 = self.sources.items[self.source_index][string_token.start + 1 .. string_token.end - 1];
+                    const actual_path = try std.fs.path.join(self.gpa, &.{ dir_name, include_path });
 
-                const actual_path = try std.fs.path.join(self.gpa, &.{ dir_name, include_path });
-
-                const included_source = try std.fs.cwd().readFileAlloc(
-                    self.gpa,
-                    actual_path,
-                    std.math.maxInt(u32),
-                );
-
-                const include_index = self.sources.items.len;
-
-                try self.sources.append(self.gpa, included_source);
-
-                try self.source_map.put(self.gpa, actual_path, @intCast(include_index));
-
-                try self.pushTokenizerState(
-                    .{
-                        .file_index = @intCast(include_index),
-                        .start = 0,
-                        .end = @intCast(included_source.len),
-                    },
-                    self.define_generation,
-                );
-            },
-            .directive_if,
-            .directive_ifdef,
-            .directive_ifndef,
-            .directive_elif,
-            => {
-                if (token.tag != .directive_elif) {
-                    const identifier_token = self.tokenizer.next() orelse break;
-                    const identifier_actual_token: Ast.TokenIndex = .fromToken(
-                        self.source_index,
-                        self.sources.items[self.source_index],
-                        self.tokenizer.source,
-                        identifier_token,
+                    const included_source = try std.fs.cwd().readFileAlloc(
+                        self.gpa,
+                        actual_path,
+                        std.math.maxInt(u32),
                     );
 
-                    const condition_string = self.sources.items[self.source_index][identifier_actual_token.string_start .. identifier_actual_token.string_start + identifier_actual_token.string_length];
+                    const include_index = self.sources.items.len;
 
-                    self.directive_if_level += 1;
+                    try self.sources.append(self.gpa, included_source);
 
-                    //TODO: handle preprocessor errors
+                    try self.source_map.put(self.gpa, actual_path, @intCast(include_index));
 
-                    switch (token.tag) {
-                        .directive_if => {
-                            switch (identifier_token.tag) {
-                                .identifier => {
-                                    const string = condition_string;
-
-                                    const define_source_range, const define_source_generation = self.directiveResolveMacro(
-                                        string,
-                                    ) orelse @panic("TODO: error message not implemented");
-                                    _ = define_source_generation; // autofix
-
-                                    var define_tokenizer: Tokenizer = .init(self.sources.items[self.source_index][define_source_range.start..define_source_range.end]);
-
-                                    //TODO: handle preprocessor expressions
-                                    const value_token = define_tokenizer.next().?;
-
-                                    const value = try std.fmt.parseUnsigned(
-                                        u64,
-                                        self.tokenizer.source[value_token.start..value_token.end],
-                                        10,
-                                    );
-                                    self.directive_if_condition = value != 0;
-                                },
-                                .literal_number => {
-                                    const value = try std.fmt.parseUnsigned(
-                                        u64,
-                                        self.tokenizer.source[identifier_token.start..identifier_token.end],
-                                        10,
-                                    );
-                                    self.directive_if_condition = value != 0;
-                                },
-                                else => unreachable,
-                            }
+                    try self.pushTokenizerState(
+                        .{
+                            .file_index = @intCast(include_index),
+                            .start = 0,
+                            .end = @intCast(included_source.len),
                         },
-                        .directive_ifdef => {
-                            self.directive_if_condition = self.defines.contains(condition_string);
-                        },
-                        .directive_ifndef => {
-                            self.directive_if_condition = !self.defines.contains(condition_string);
-                        },
-                        else => unreachable,
+                        self.define_generation,
+                    );
+                },
+                .directive_if,
+                .directive_ifdef,
+                .directive_ifndef,
+                .directive_elif,
+                => {
+                    if (token.tag != .directive_elif) {
+                        self.directive_if_level += 1;
+
+                        switch (token.tag) {
+                            .directive_if => {
+                                self.directive_if_condition = try self.directiveParseIfCondition() != 0;
+                            },
+                            .directive_ifdef => {
+                                const identifier_token = self.tokenizer.next() orelse break;
+
+                                const identifier_actual_token: Ast.TokenIndex = .fromToken(
+                                    self.source_index,
+                                    self.sources.items[self.source_index],
+                                    self.tokenizer.source,
+                                    identifier_token,
+                                );
+
+                                const condition_string = self.sources.items[self.source_index][identifier_actual_token.string_start .. identifier_actual_token.string_start + identifier_actual_token.string_length];
+
+                                self.directive_if_condition = self.defines.contains(condition_string);
+                            },
+                            .directive_ifndef => {
+                                const identifier_token = self.tokenizer.next() orelse break;
+
+                                const identifier_actual_token: Ast.TokenIndex = .fromToken(
+                                    self.source_index,
+                                    self.sources.items[self.source_index],
+                                    self.tokenizer.source,
+                                    identifier_token,
+                                );
+
+                                const condition_string = self.sources.items[self.source_index][identifier_actual_token.string_start .. identifier_actual_token.string_start + identifier_actual_token.string_length];
+
+                                self.directive_if_condition = !self.defines.contains(condition_string);
+                            },
+                            else => unreachable,
+                        }
+                    } else {
+                        self.directive_if_condition = !self.directive_if_condition;
                     }
-                } else {
-                    self.directive_if_condition = !self.directive_if_condition;
-                }
 
-                if (self.directive_if_condition) continue;
+                    if (self.directive_if_condition) continue;
 
-                var if_condition_level: u32 = 1;
+                    var if_condition_level: u32 = 1;
 
-                loop_skip: while (true) {
-                    if (self.tokenizer.advanceUntilNextDirective() == null) {
+                    loop_skip: while (true) {
+                        if (self.tokenizer.advanceUntilNextDirective() == null) {
+                            try self.errors.append(self.gpa, .{
+                                .tag = .expected_endif,
+                                .anchor = .{ .token = .fromToken(
+                                    self.source_index,
+                                    self.sources.items[self.source_index],
+                                    self.tokenizer.source,
+                                    token,
+                                ) },
+                            });
+
+                            return error.UnexpectedEndif;
+                        }
+
+                        //TODO: handle preprocessor errors
+                        const directive_token = self.tokenizer.next() orelse break;
+
+                        switch (directive_token.tag) {
+                            .directive_if,
+                            .directive_ifdef,
+                            .directive_ifndef,
+                            => {
+                                if_condition_level += 1;
+                            },
+                            .directive_endif,
+                            .directive_elif,
+                            .directive_end,
+                            => {
+                                if_condition_level -= 1;
+
+                                if (if_condition_level == 0) {
+                                    break :loop_skip;
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                },
+                .directive_endif => {
+                    if (self.directive_if_level == 0) {
                         try self.errors.append(self.gpa, .{
-                            .tag = .expected_endif,
-                            .anchor = .{ .token = .fromToken(
-                                self.source_index,
-                                self.sources.items[self.source_index],
-                                self.tokenizer.source,
-                                token,
-                            ) },
+                            .tag = .unexpected_endif,
+                            .anchor = .{ .token = .fromToken(self.source_index, self.sources.items[self.source_index], self.tokenizer.source, token) },
                         });
 
                         return error.UnexpectedEndif;
                     }
 
-                    //TODO: handle preprocessor errors
-                    const directive_token = self.tokenizer.next() orelse break;
+                    self.directive_if_level -= 1;
+                },
+                .directive_define => {
+                    const identifier_token = self.tokenizer.next() orelse break;
 
-                    switch (directive_token.tag) {
-                        .directive_if,
-                        .directive_ifdef,
-                        .directive_ifndef,
-                        => {
-                            if_condition_level += 1;
-                        },
-                        .directive_endif,
-                        .directive_elif,
-                        .directive_end,
-                        => {
-                            if_condition_level -= 1;
+                    const string = self.tokenizer.source[identifier_token.start..identifier_token.end];
 
-                            if (if_condition_level == 0) {
-                                break :loop_skip;
-                            }
-                        },
-                        else => {},
+                    self.define_generation += 1;
+
+                    const define = self.defines.getOrPut(self.gpa, string) catch unreachable;
+
+                    if (!define.found_existing) {
+                        define.value_ptr.* = .{};
                     }
-                }
-            },
-            .directive_endif => {
-                if (self.directive_if_level == 0) {
+
+                    //TODO: cache the tokenisation of defines to avoid repeat tokenization, with a heuristic based on text size vs token list size
+
+                    //TODO: handle errors
+
+                    //keep going until new line
+                    //TODO: handle line continuation
+                    const line_range = self.tokenizer.advanceLineRange();
+
+                    try define.value_ptr.*.generation_to_definition.put(
+                        self.gpa,
+                        self.define_generation,
+                        .{
+                            .file_index = self.source_index,
+                            .start = line_range.start,
+                            .end = line_range.end,
+                        },
+                    );
+                },
+                .directive_undef => {
+                    const identifier_token = self.tokenizer.next() orelse break;
+
+                    _ = self.defines.remove(self.tokenizer.source[identifier_token.start..identifier_token.end]);
+                },
+                .directive_error => {
                     try self.errors.append(self.gpa, .{
-                        .tag = .unexpected_endif,
-                        .anchor = .{ .token = .fromToken(self.source_index, self.sources.items[self.source_index], self.tokenizer.source, token) },
+                        .tag = .directive_error,
+                        .anchor = .{ .token = .fromToken(
+                            self.source_index,
+                            self.sources.items[self.source_index],
+                            self.tokenizer.source,
+                            token,
+                        ) },
                     });
 
-                    return error.UnexpectedEndif;
-                }
+                    return error.DirectiveError;
+                },
+                .directive_end => {},
+                .identifier => {
+                    const macro_resolved_range, const macro_resolved_generation = self.directiveResolveMacro(self.tokenizer.source[token.start..token.end]) orelse {
+                        return .fromToken(
+                            self.source_index,
+                            self.sources.items[self.source_index],
+                            self.tokenizer.source,
+                            token,
+                        );
+                    };
 
-                self.directive_if_level -= 1;
-            },
-            .directive_define => {
-                const identifier_token = self.tokenizer.next() orelse break;
+                    try self.pushTokenizerState(macro_resolved_range, macro_resolved_generation);
 
-                const string = self.tokenizer.source[identifier_token.start..identifier_token.end];
-
-                self.define_generation += 1;
-
-                const define = self.defines.getOrPut(self.gpa, string) catch unreachable;
-
-                if (!define.found_existing) {
-                    define.value_ptr.* = .{};
-                }
-
-                //TODO: cache the tokenisation of defines to avoid repeat tokenization, with a heuristic based on text size vs token list size
-
-                //TODO: handle errors
-
-                //keep going until new line
-                //TODO: handle line continuation
-                const line_range = self.tokenizer.advanceLineRange();
-
-                try define.value_ptr.*.generation_to_definition.put(
-                    self.gpa,
-                    self.define_generation,
-                    .{
-                        .file_index = self.source_index,
-                        .start = line_range.start,
-                        .end = line_range.end,
-                    },
-                );
-            },
-            .directive_undef => {
-                const identifier_token = self.tokenizer.next() orelse break;
-
-                _ = self.defines.remove(self.tokenizer.source[identifier_token.start..identifier_token.end]);
-            },
-            .directive_error => {
-                try self.errors.append(self.gpa, .{
-                    .tag = .directive_error,
-                    .anchor = .{ .token = .fromToken(
-                        self.source_index,
-                        self.sources.items[self.source_index],
-                        self.tokenizer.source,
-                        token,
-                    ) },
-                });
-
-                return error.DirectiveError;
-            },
-            .directive_end => {},
-            .identifier => {
-                const macro_resolved_range, const macro_resolved_generation = self.directiveResolveMacro(self.tokenizer.source[token.start..token.end]) orelse {
+                    continue;
+                },
+                .directive_line,
+                => {
+                    try self.errors.append(self.gpa, .{
+                        .tag = .unsupported_directive,
+                        .anchor = .{ .token = .fromToken(
+                            self.source_index,
+                            self.sources.items[self.source_index],
+                            self.tokenizer.source,
+                            token,
+                        ) },
+                    });
+                },
+                else => {
                     return .fromToken(
                         self.source_index,
                         self.sources.items[self.source_index],
                         self.tokenizer.source,
                         token,
                     );
-                };
-
-                try self.pushTokenizerState(macro_resolved_range, macro_resolved_generation);
-
-                return try self.advanceTokenizer();
-            },
-            .directive_line,
-            => {
-                try self.errors.append(self.gpa, .{
-                    .tag = .unsupported_directive,
-                    .anchor = .{ .token = .fromToken(
-                        self.source_index,
-                        self.sources.items[self.source_index],
-                        self.tokenizer.source,
-                        token,
-                    ) },
-                });
-            },
-            else => {
-                return .fromToken(
-                    self.source_index,
-                    self.sources.items[self.source_index],
-                    self.tokenizer.source,
-                    token,
-                );
-            },
+                },
+            }
         }
-    }
 
-    if (self.tokenizer_stack.items.len > 0) {
+        if (self.tokenizer_stack.items.len == 0) {
+            break;
+        }
+
         try self.popTokenizerState();
-
-        return try self.advanceTokenizer();
     }
 
     return .end_of_file;
+}
+
+fn directiveParseIfCondition(
+    self: *Parser,
+) !i64 {
+    const token = try self.tokenizerConsume();
+
+    switch (token.tag) {
+        .literal_number => {
+            const value = try std.fmt.parseInt(
+                i64,
+                self.tokenString(token),
+                10,
+            );
+
+            return value;
+        },
+        .identifier => {
+            if (!std.mem.eql(u8, self.tokenString(token), "defined")) {
+                const range, const gen = self.directiveResolveMacro(self.tokenString(token)) orelse unreachable;
+                _ = gen; // autofix
+                _ = range; // autofix
+
+                //TODO: handle macro expansion in #if properly
+                unreachable;
+            }
+
+            var left_paren_or_ident = try self.tokenizerConsume();
+
+            if (left_paren_or_ident.tag == .left_paren) {
+                left_paren_or_ident = try self.tokenizerConsume();
+            }
+
+            const identifier = left_paren_or_ident;
+
+            const maybe_define = self.defines.get(self.tokenString(identifier));
+
+            const condition = maybe_define != null;
+
+            if (left_paren_or_ident.tag == .left_paren) {
+                _ = try self.tokenizerConsume();
+            }
+
+            return @intFromBool(condition);
+        },
+        else => |tag| @panic(@tagName(tag)),
+    }
 }
 
 //TODO: make this a distinct enum type?
@@ -1244,7 +1118,6 @@ fn directiveResolveMacro(
 pub const TokenWindow = [3]Ast.TokenIndex;
 
 pub const Define = struct {
-    //TODO: handle multiple files
     generation_to_definition: std.AutoArrayHashMapUnmanaged(u32, Ast.SourceStringRange) = .{},
 };
 

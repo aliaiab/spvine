@@ -214,8 +214,6 @@ pub fn next(self: *Tokenizer) ?Token {
                     //TODO: move this to be after macro expansion
                     if (Token.getKeyword(string)) |keyword_tag| {
                         token.tag = keyword_tag;
-                    } else if (Token.reserved_keywords.get(string)) |_| {
-                        token.tag = .reserved_keyword;
                     } else {
                         token.tag = .identifier;
                     }
@@ -556,8 +554,6 @@ pub const Token = struct {
         end_of_file,
         invalid,
 
-        reserved_keyword,
-
         directive_define,
         directive_undef,
         directive_if,
@@ -580,71 +576,18 @@ pub const Token = struct {
         keyword_writeonly,
         keyword_volatile,
         keyword_coherent,
-
         keyword_attribute,
         keyword_varying,
         keyword_buffer,
         keyword_uniform,
         keyword_shared,
         keyword_const,
-
         keyword_flat,
         keyword_smooth,
         keyword_precise,
-
         keyword_struct,
-
-        keyword_void,
-        keyword_int,
-        keyword_uint,
-        keyword_float,
-        keyword_double,
-        keyword_bool,
-        keyword_vec2,
-        keyword_vec3,
-        keyword_vec4,
-
-        keyword_ivec2,
-        keyword_ivec3,
-        keyword_ivec4,
-
-        keyword_uvec2,
-        keyword_uvec3,
-        keyword_uvec4,
-
-        keyword_bvec2,
-        keyword_bvec3,
-        keyword_bvec4,
-
-        keyword_dvec2,
-        keyword_dvec3,
-        keyword_dvec4,
-
-        keyword_mat2,
-        keyword_mat3,
-        keyword_mat4,
-
-        keyword_mat2x2,
-        keyword_mat3x3,
-        keyword_mat4x4,
-        keyword_mat2x3,
-        keyword_mat3x4,
-        keyword_mat3x2,
-        keyword_mat4x3,
-        keyword_dmat2,
-        keyword_dmat3,
-        keyword_dmat4,
-        keyword_dmat2x2,
-        keyword_dmat3x3,
-        keyword_dmat4x4,
-        keyword_dmat2x3,
-        keyword_dmat3x4,
-        keyword_dmat3x2,
-        keyword_dmat4x3,
-
         keyword_true,
         keyword_false,
-
         keyword_if,
         keyword_else,
         keyword_break,
@@ -713,7 +656,6 @@ pub const Token = struct {
                 .literal_number,
                 .literal_string,
                 .directive_end,
-                .reserved_keyword,
                 => null,
                 .directive_define => "#define",
                 .directive_undef => "#undef",
@@ -744,60 +686,12 @@ pub const Token = struct {
                 .keyword_shared => "shared",
                 .keyword_const => "const",
 
+                .keyword_true => "true",
+                .keyword_false => "false",
                 .keyword_flat => "flat",
                 .keyword_smooth => "smooth",
 
                 .keyword_struct => "struct",
-
-                .keyword_void => "void",
-                .keyword_int => "int",
-                .keyword_uint => "uint",
-                .keyword_float => "float",
-                .keyword_double => "double",
-                .keyword_bool => "bool",
-                .keyword_true => "true",
-                .keyword_false => "false",
-
-                .keyword_vec2 => "vec2",
-                .keyword_vec3 => "vec3",
-                .keyword_vec4 => "vec4",
-
-                .keyword_ivec2 => "ivec2",
-                .keyword_ivec3 => "ivec3",
-                .keyword_ivec4 => "ivec4",
-
-                .keyword_uvec2 => "uvec2",
-                .keyword_uvec3 => "uvec3",
-                .keyword_uvec4 => "uvec4",
-
-                .keyword_bvec2 => "bvec2",
-                .keyword_bvec3 => "bvec3",
-                .keyword_bvec4 => "bvec4",
-
-                .keyword_dvec2 => "dvec2",
-                .keyword_dvec3 => "dvec3",
-                .keyword_dvec4 => "dvec4",
-
-                .keyword_mat2 => "mat2",
-                .keyword_mat3 => "mat3",
-                .keyword_mat4 => "mat4",
-                .keyword_mat2x2 => "mat2x2",
-                .keyword_mat3x3 => "mat3x3",
-                .keyword_mat4x4 => "mat4x4",
-                .keyword_mat2x3 => "mat2x3",
-                .keyword_mat3x4 => "mat3x4",
-                .keyword_mat3x2 => "mat3x2",
-                .keyword_mat4x3 => "mat4x3",
-                .keyword_dmat2 => "dmat2",
-                .keyword_dmat3 => "dmat3",
-                .keyword_dmat4 => "dmat4",
-                .keyword_dmat2x2 => "dmat2x2",
-                .keyword_dmat3x3 => "dmat3x3",
-                .keyword_dmat4x4 => "dmat4x4",
-                .keyword_dmat2x3 => "dmat2x3",
-                .keyword_dmat3x4 => "dmat3x4",
-                .keyword_dmat3x2 => "dmat3x2",
-                .keyword_dmat4x3 => "dmat4x3",
 
                 .keyword_if => "if",
                 .keyword_else => "else",
@@ -880,51 +774,8 @@ pub const Token = struct {
         .{ "smooth", .keyword_smooth },
         .{ "precise", .keyword_precise },
         .{ "struct", .keyword_struct },
-        .{ "void", .keyword_void },
-        .{ "int", .keyword_int },
-        .{ "uint", .keyword_uint },
-        .{ "float", .keyword_float },
-        .{ "double", .keyword_double },
-        .{ "bool", .keyword_bool },
         .{ "true", .keyword_true },
         .{ "false", .keyword_false },
-        .{ "vec2", .keyword_vec2 },
-        .{ "vec3", .keyword_vec3 },
-        .{ "vec4", .keyword_vec4 },
-        .{ "ivec2", .keyword_ivec2 },
-        .{ "ivec3", .keyword_ivec3 },
-        .{ "ivec4", .keyword_ivec4 },
-        .{ "uvec2", .keyword_uvec2 },
-        .{ "uvec3", .keyword_uvec3 },
-        .{ "uvec4", .keyword_uvec4 },
-        .{ "bvec2", .keyword_bvec2 },
-        .{ "bvec3", .keyword_bvec3 },
-        .{ "bvec4", .keyword_bvec4 },
-        .{ "dvec2", .keyword_dvec2 },
-        .{ "dvec3", .keyword_dvec3 },
-        .{ "dvec4", .keyword_dvec4 },
-
-        .{ "mat2", .keyword_mat2 },
-        .{ "mat3", .keyword_mat3 },
-        .{ "mat4", .keyword_mat4 },
-        .{ "mat2x2", .keyword_mat2x2 },
-        .{ "mat3x3", .keyword_mat3x3 },
-        .{ "mat4x4", .keyword_mat4x4 },
-        .{ "mat2x3", .keyword_mat2x3 },
-        .{ "mat3x4", .keyword_mat3x4 },
-        .{ "mat3x2", .keyword_mat3x2 },
-        .{ "mat4x3", .keyword_mat4x3 },
-        .{ "dmat2", .keyword_dmat2 },
-        .{ "dmat3", .keyword_dmat3 },
-        .{ "dmat4", .keyword_dmat4 },
-        .{ "dmat2x2", .keyword_dmat2x2 },
-        .{ "dmat3x3", .keyword_dmat3x3 },
-        .{ "dmat4x4", .keyword_dmat4x4 },
-        .{ "dmat2x3", .keyword_dmat2x3 },
-        .{ "dmat3x4", .keyword_dmat3x4 },
-        .{ "dmat3x2", .keyword_dmat3x2 },
-        .{ "dmat4x3", .keyword_dmat4x3 },
-
         .{ "if", .keyword_if },
         .{ "else", .keyword_else },
         .{ "break", .keyword_break },
@@ -958,88 +809,7 @@ pub const Token = struct {
         .{ "include", .directive_include },
         .{ "line", .directive_line },
     });
-
-    pub const reserved_keywords = token_map.StaticCanonicalMap(void).initComptime(.{
-        .{"common"},
-        .{"partition"},
-        .{"active"},
-        .{"asm"},
-        .{"class"},
-        .{"union"},
-        .{"enum"},
-        .{"typedef"},
-        .{"template"},
-        .{"this"},
-        .{"resource"},
-        .{"goto"},
-        .{"inline"},
-        .{"noinline"},
-        .{"public"},
-        .{"static"},
-        .{"extern"},
-        .{"interface"},
-        .{"long"},
-        .{"short"},
-        .{"half"},
-        .{"fixed"},
-        .{"unsigned"},
-        .{"superp"},
-        .{"input"},
-        .{"output"},
-        .{"hvec2"},
-        .{"hvec3"},
-        .{"hvec4"},
-        .{"fvec2"},
-        .{"fvec3"},
-        .{"fvec4"},
-        .{"sampler3DRect"},
-        .{"filter"},
-        .{"sizeof"},
-        .{"cast"},
-        .{"namespace"},
-        .{"using"},
-    });
 };
-
-test "Basic Vertex shader" {
-    const expect = std.testing.expect;
-
-    const source =
-        \\#version 450
-        \\
-        \\//Comment
-        \\void main() {
-        \\  gl_Position = vec4(0.5, 0.5, 0.5, 1.0);
-        \\}
-    ;
-
-    var tokenizer = Tokenizer.init(source);
-
-    try expect(tokenizer.next().?.tag == .directive_version);
-    try expect(tokenizer.next().?.tag == .literal_number);
-    try expect(tokenizer.next().?.tag == .directive_end);
-
-    try expect(tokenizer.next().?.tag == .keyword_void);
-    try expect(tokenizer.next().?.tag == .identifier);
-    try expect(tokenizer.next().?.tag == .left_paren);
-    try expect(tokenizer.next().?.tag == .right_paren);
-    try expect(tokenizer.next().?.tag == .left_brace);
-    try expect(tokenizer.next().?.tag == .identifier);
-    try expect(tokenizer.next().?.tag == .equals);
-    try expect(tokenizer.next().?.tag == .keyword_vec4);
-    try expect(tokenizer.next().?.tag == .left_paren);
-    try expect(tokenizer.next().?.tag == .literal_number);
-    try expect(tokenizer.next().?.tag == .comma);
-    try expect(tokenizer.next().?.tag == .literal_number);
-    try expect(tokenizer.next().?.tag == .comma);
-    try expect(tokenizer.next().?.tag == .literal_number);
-    try expect(tokenizer.next().?.tag == .comma);
-    try expect(tokenizer.next().?.tag == .literal_number);
-    try expect(tokenizer.next().?.tag == .right_paren);
-    try expect(tokenizer.next().?.tag == .semicolon);
-    try expect(tokenizer.next().?.tag == .right_brace);
-    try expect(tokenizer.next() == null);
-}
 
 test "Invalid UTF-8" {
     var tokenizer = Tokenizer.init("//\x80");
@@ -1053,16 +823,6 @@ test "UTF-8 BOM is recognized and skipped" {
 
     try std.testing.expect(tokenizer.next().?.tag == .identifier);
     try std.testing.expect(tokenizer.next().?.tag == .semicolon);
-    try std.testing.expect(tokenizer.next() == null);
-}
-
-test "Reserved keyword" {
-    var tokenizer = Tokenizer.init("goto asm typedef template\n");
-
-    try std.testing.expect(tokenizer.next().?.tag == .reserved_keyword);
-    try std.testing.expect(tokenizer.next().?.tag == .reserved_keyword);
-    try std.testing.expect(tokenizer.next().?.tag == .reserved_keyword);
-    try std.testing.expect(tokenizer.next().?.tag == .reserved_keyword);
     try std.testing.expect(tokenizer.next() == null);
 }
 

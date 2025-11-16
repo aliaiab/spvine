@@ -478,24 +478,16 @@ fn printAstToken(
         .keyword_flat,
         .keyword_smooth,
         .keyword_struct,
-        .keyword_void,
-        .keyword_int,
-        .keyword_uint,
-        .keyword_float,
-        .keyword_double,
-        .keyword_bool,
         .keyword_true,
         .keyword_false,
-        .keyword_vec2,
-        .keyword_vec3,
-        .keyword_vec4,
-        .keyword_in,
-        .keyword_out,
-        .keyword_inout,
-        //TODO: maybe print reserved keywords using red to indicate their 'invalidness'?
-        .reserved_keyword,
         => {
-            writer.print(terminal_blue, .{}) catch {};
+            var colour: []const u8 = terminal_blue;
+
+            if (Sema.reserved_identifiers.get(ast.sources[file_index][token.start..token.end])) |_| {
+                colour = terminal_purple;
+            }
+
+            writer.print("{s}", .{colour}) catch {};
 
             writer.print("{s}" ++ color_end, .{
                 ast.sources[file_index][token.start..token.end],
@@ -548,53 +540,21 @@ fn printAstToken(
         .identifier => {
             const string = ast.sources[file_index][token.start..token.end];
 
-            if (true) {
-                writer.print(terminal_white, .{}) catch {};
+            var colour: []const u8 = terminal_white;
 
-                writer.print("{s}" ++ color_end, .{
-                    string,
-                }) catch {};
-            } else { //TODO: handle macro expansion
-                if (ast.defines.get(string)) |define| {
-                    const token_def_start = define.source_range.start;
-                    _ = token_def_start; // autofix
-                    const first_token_tag = define.start_token.tag;
-
-                    switch (first_token_tag) {
-                        .keyword_void,
-                        .keyword_int,
-                        .keyword_uint,
-                        .keyword_float,
-                        .keyword_double,
-                        .keyword_bool,
-                        .keyword_true,
-                        .keyword_false,
-                        .keyword_vec2,
-                        .keyword_vec3,
-                        .keyword_vec4,
-                        => {
-                            writer.print(terminal_blue, .{}) catch {};
-
-                            writer.print("{s}" ++ color_end, .{
-                                ast.source[token.start..token.end],
-                            }) catch {};
-                        },
-                        else => {
-                            writer.print(terminal_white, .{}) catch {};
-
-                            writer.print("{s}" ++ color_end, .{
-                                string,
-                            }) catch {};
-                        },
-                    }
-                } else {
-                    writer.print(terminal_white, .{}) catch {};
-
-                    writer.print("{s}" ++ color_end, .{
-                        string,
-                    }) catch {};
-                }
+            if (Sema.reserved_identifiers.get(ast.sources[file_index][token.start..token.end])) |_| {
+                colour = terminal_yellow;
             }
+
+            if (Sema.buildtin_typename_map.get(ast.sources[file_index][token.start..token.end])) |_| {
+                colour = terminal_blue;
+            }
+
+            writer.print("{s}", .{colour}) catch {};
+
+            writer.print("{s}" ++ color_end, .{
+                string,
+            }) catch {};
         },
         else => {
             writer.print("{s}", .{

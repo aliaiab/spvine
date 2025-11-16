@@ -111,7 +111,6 @@ pub fn sourceStringLocation(
 }
 
 pub fn tokenString(self: Ast, token_index: TokenIndex) []const u8 {
-    //TODO: handle multiple files
     const token_start = token_index.string_start;
     const token_end = token_index.string_start + token_index.string_length;
 
@@ -318,7 +317,9 @@ pub const TokenIndex = packed struct(u64) {
     ///This is the spec defined limit for identifiers, which are the longest tokens
     string_length: u10,
     ///Index into the file table, specifies which included file the token is from
-    file_index: u14,
+    file_index: u12,
+    has_line_continuation: bool = false,
+    is_token_pasted: bool = false,
 
     pub const nil: TokenIndex = .{ .file_index = 0, .tag = .invalid, .string_length = 0, .string_start = 0 };
 
