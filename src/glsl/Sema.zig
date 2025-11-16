@@ -666,6 +666,15 @@ pub fn scopeDefine(
 
     const identifier_string = ast.tokenString(identifier_token);
 
+    if (reserved_identifiers.get(identifier_string)) |_| {
+        try self.errors.append(self.gpa, .{
+            .tag = .reserved_keyword_token,
+            .anchor = .{ .token = identifier_token },
+        });
+
+        return error.IdentifierAlreadyDefined;
+    }
+
     if (scope.identifiers.get(identifier_string)) |original_definition| {
         try self.errors.append(self.gpa, .{
             .tag = .identifier_redefined,
@@ -720,50 +729,23 @@ pub fn resolveTypeFromIdentifier(self: *Sema, ast: Ast, type_expr_token: Ast.Tok
     const token_tag: Token.Tag = type_expr_token.tag;
 
     return switch (token_tag) {
-        .keyword_uint => .uint,
-        .keyword_int => .int,
-        .keyword_float => .float,
-        .keyword_double => .double,
-        .keyword_bool => .bool,
-        .keyword_void => .void,
-
-        .keyword_vec2 => .vec2,
-        .keyword_vec3 => .vec3,
-        .keyword_vec4 => .vec4,
-
-        .keyword_uvec2 => .uvec2,
-        .keyword_uvec3 => .uvec3,
-        .keyword_uvec4 => .uvec4,
-
-        .keyword_ivec2 => .ivec2,
-        .keyword_ivec3 => .ivec3,
-        .keyword_ivec4 => .ivec4,
-
-        .keyword_bvec2 => .bvec2,
-        .keyword_bvec3 => .bvec3,
-        .keyword_bvec4 => .bvec4,
-
-        .keyword_dvec2 => .dvec2,
-        .keyword_dvec3 => .dvec3,
-        .keyword_dvec4 => .dvec4,
-
-        .keyword_mat2, .keyword_mat2x2 => .mat2,
-        .keyword_mat3, .keyword_mat3x3 => .mat3,
-        .keyword_mat4, .keyword_mat4x4 => .mat4,
-        .keyword_mat2x3 => .mat2x3,
-        .keyword_mat3x4 => .mat3x4,
-        .keyword_mat3x2 => .mat3x2,
-        .keyword_mat4x3 => .mat4x3,
-        .keyword_dmat2, .keyword_dmat2x2 => .dmat2,
-        .keyword_dmat3, .keyword_dmat3x3 => .dmat3,
-        .keyword_dmat4, .keyword_dmat4x4 => .dmat4,
-        .keyword_dmat2x3 => .dmat2x3,
-        .keyword_dmat3x4 => .dmat3x4,
-        .keyword_dmat3x2 => .dmat3x2,
-        .keyword_dmat4x3 => .dmat4x3,
-
         .identifier => {
-            const type_index = self.type_map.get(ast.tokenString(type_expr_token)) orelse {
+            const identifier_string = ast.tokenString(type_expr_token);
+
+            if (reserved_identifiers.get(identifier_string)) |_| {
+                try self.errors.append(self.gpa, .{
+                    .tag = .reserved_keyword_token,
+                    .anchor = .{ .token = type_expr_token },
+                });
+
+                return error.IdentifierAlreadyDefined;
+            }
+
+            if (buildtin_typename_map.get(identifier_string)) |builtin_type| {
+                return builtin_type;
+            }
+
+            const type_index = self.type_map.get(identifier_string) orelse {
                 try self.errors.append(self.gpa, .{
                     .tag = .undeclared_identifier,
                     .anchor = .{ .token = type_expr_token },
@@ -782,49 +764,11 @@ pub fn resolveTypeFromIdentifierNoError(self: *Sema, ast: Ast, type_expr_token: 
     const token_tag: Token.Tag = type_expr_token.tag;
 
     return switch (token_tag) {
-        .keyword_uint => .uint,
-        .keyword_int => .int,
-        .keyword_float => .float,
-        .keyword_double => .double,
-        .keyword_bool => .bool,
-        .keyword_void => .void,
-
-        .keyword_vec2 => .vec2,
-        .keyword_vec3 => .vec3,
-        .keyword_vec4 => .vec4,
-
-        .keyword_uvec2 => .uvec2,
-        .keyword_uvec3 => .uvec3,
-        .keyword_uvec4 => .uvec4,
-
-        .keyword_ivec2 => .ivec2,
-        .keyword_ivec3 => .ivec3,
-        .keyword_ivec4 => .ivec4,
-
-        .keyword_bvec2 => .bvec2,
-        .keyword_bvec3 => .bvec3,
-        .keyword_bvec4 => .bvec4,
-
-        .keyword_dvec2 => .dvec2,
-        .keyword_dvec3 => .dvec3,
-        .keyword_dvec4 => .dvec4,
-
-        .keyword_mat2, .keyword_mat2x2 => .mat2,
-        .keyword_mat3, .keyword_mat3x3 => .mat3,
-        .keyword_mat4, .keyword_mat4x4 => .mat4,
-        .keyword_mat2x3 => .mat2x3,
-        .keyword_mat3x4 => .mat3x4,
-        .keyword_mat3x2 => .mat3x2,
-        .keyword_mat4x3 => .mat4x3,
-        .keyword_dmat2, .keyword_dmat2x2 => .dmat2,
-        .keyword_dmat3, .keyword_dmat3x3 => .dmat3,
-        .keyword_dmat4, .keyword_dmat4x4 => .dmat4,
-        .keyword_dmat2x3 => .dmat2x3,
-        .keyword_dmat3x4 => .dmat3x4,
-        .keyword_dmat3x2 => .dmat3x2,
-        .keyword_dmat4x3 => .dmat4x3,
-
         .identifier => {
+            if (buildtin_typename_map.get(ast.tokenString(type_expr_token))) |builtin_type| {
+                return builtin_type;
+            }
+
             const type_index = self.type_map.get(ast.tokenString(type_expr_token)) orelse {
                 return null;
             };
@@ -1464,7 +1408,13 @@ pub fn printTypeName(self: Sema, ast: Ast, writer: *std.Io.Writer, type_index: T
     }
 
     if (type_index.toArrayIndex() == null) {
-        return try writer.writeAll(@tagName(type_index));
+        var canon_type_data = type_index.toData();
+
+        canon_type_data.literal = 0;
+
+        const canon_type: TypeIndex = @enumFromInt(@as(u64, @bitCast(canon_type_data)));
+
+        return try writer.writeAll(@tagName(canon_type));
     }
 
     const type_data = &self.types.items[type_index.toArrayIndex().?];
@@ -1827,21 +1777,21 @@ pub const TypeIndex = enum(u64) {
         .scalar_type = .double,
     }),
 
-    mat2 = @bitCast(TypeIndexData{
+    mat2x2 = @bitCast(TypeIndexData{
         .sign = 0,
         .matrix_row_count = 1,
         .matrix_column_count = 1,
         .literal = 0,
         .scalar_type = .float,
     }),
-    mat3 = @bitCast(TypeIndexData{
+    mat3x3 = @bitCast(TypeIndexData{
         .sign = 0,
         .matrix_row_count = 2,
         .matrix_column_count = 2,
         .literal = 0,
         .scalar_type = .float,
     }),
-    mat4 = @bitCast(TypeIndexData{
+    mat4x4 = @bitCast(TypeIndexData{
         .sign = 0,
         .matrix_row_count = 3,
         .matrix_column_count = 3,
@@ -1893,21 +1843,21 @@ pub const TypeIndex = enum(u64) {
         .scalar_type = .float,
     }),
 
-    dmat2 = @bitCast(TypeIndexData{
+    dmat2x2 = @bitCast(TypeIndexData{
         .sign = 0,
         .matrix_row_count = 1,
         .matrix_column_count = 1,
         .literal = 0,
         .scalar_type = .double,
     }),
-    dmat3 = @bitCast(TypeIndexData{
+    dmat3x3 = @bitCast(TypeIndexData{
         .sign = 0,
         .matrix_row_count = 2,
         .matrix_column_count = 2,
         .literal = 0,
         .scalar_type = .double,
     }),
-    dmat4 = @bitCast(TypeIndexData{
+    dmat4x4 = @bitCast(TypeIndexData{
         .sign = 0,
         .matrix_row_count = 3,
         .matrix_column_count = 3,
@@ -2148,6 +2098,91 @@ pub const TypeIndex = enum(u64) {
         };
     };
 };
+
+pub const buildtin_typename_map: token_map.StaticCanonicalMap(TypeIndex) = .initComptime(.{
+    .{ "void", .void },
+    .{ "int", .int },
+    .{ "uint", .uint },
+    .{ "float", .float },
+    .{ "double", .double },
+    .{ "bool", .bool },
+    .{ "vec2", .vec2 },
+    .{ "vec3", .vec3 },
+    .{ "vec4", .vec4 },
+    .{ "ivec2", .ivec2 },
+    .{ "ivec3", .ivec3 },
+    .{ "ivec4", .ivec4 },
+    .{ "uvec2", .uvec2 },
+    .{ "uvec3", .uvec3 },
+    .{ "uvec4", .uvec4 },
+    .{ "bvec2", .bvec2 },
+    .{ "bvec3", .bvec3 },
+    .{ "bvec4", .bvec4 },
+    .{ "dvec2", .dvec2 },
+    .{ "dvec3", .dvec3 },
+    .{ "dvec4", .dvec4 },
+    .{ "mat2", .mat2x2 },
+    .{ "mat3", .mat3x3 },
+    .{ "mat4", .mat4x4 },
+    .{ "mat2x2", .mat2x2 },
+    .{ "mat3x3", .mat3x3 },
+    .{ "mat4x4", .mat4x4 },
+    .{ "mat2x3", .mat2x3 },
+    .{ "mat3x4", .mat3x4 },
+    .{ "mat3x2", .mat3x2 },
+    .{ "mat4x3", .mat4x3 },
+    .{ "dmat2", .dmat2x2 },
+    .{ "dmat3", .dmat3x3 },
+    .{ "dmat4", .dmat4x4 },
+    .{ "dmat2x2", .dmat2x2 },
+    .{ "dmat3x3", .dmat3x3 },
+    .{ "dmat4x4", .dmat4x4 },
+    .{ "dmat2x3", .dmat2x3 },
+    .{ "dmat3x4", .dmat3x4 },
+    .{ "dmat3x2", .dmat3x2 },
+    .{ "dmat4x3", .dmat4x3 },
+});
+
+pub const reserved_identifiers = token_map.StaticCanonicalMap(void).initComptime(.{
+    .{"common"},
+    .{"partition"},
+    .{"active"},
+    .{"asm"},
+    .{"class"},
+    .{"union"},
+    .{"enum"},
+    .{"typedef"},
+    .{"template"},
+    .{"this"},
+    .{"resource"},
+    .{"goto"},
+    .{"inline"},
+    .{"noinline"},
+    .{"public"},
+    .{"static"},
+    .{"extern"},
+    .{"interface"},
+    .{"long"},
+    .{"short"},
+    .{"half"},
+    .{"fixed"},
+    .{"unsigned"},
+    .{"superp"},
+    .{"input"},
+    .{"output"},
+    .{"hvec2"},
+    .{"hvec3"},
+    .{"hvec4"},
+    .{"fvec2"},
+    .{"fvec3"},
+    .{"fvec4"},
+    .{"sampler3DRect"},
+    .{"filter"},
+    .{"sizeof"},
+    .{"cast"},
+    .{"namespace"},
+    .{"using"},
+});
 
 const std = @import("std");
 const Ast = @import("Ast.zig");
