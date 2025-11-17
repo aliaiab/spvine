@@ -285,8 +285,6 @@ pub fn parseStatement(self: *Parser) !Ast.NodePointer {
             var array_length_specifier: Ast.NodePointer = .nil;
 
             if (array_left_bracket != null) {
-                //TODO: I don't know if parsing this an expression is too lenient.
-                //I think it's fine to just let semantic analysis check if this is a constant
                 const array_length_expr = try self.parseExpression(.{});
 
                 array_length_specifier = array_length_expr;
@@ -700,7 +698,6 @@ pub fn nextToken(self: *Parser) !Ast.TokenIndex {
         self.token_window[i] = current_window[1 + i];
     }
 
-    //TODO: handle this error
     const token = try self.advanceTokenizer();
 
     self.token_window[current_window.len - 1] = token;
@@ -908,7 +905,6 @@ fn advanceTokenizer(self: *Parser) !Ast.TokenIndex {
                             return error.UnexpectedEndif;
                         }
 
-                        //TODO: handle preprocessor errors
                         const directive_token = self.tokenizer.next() orelse break;
 
                         switch (directive_token.tag) {
@@ -1088,7 +1084,6 @@ fn directiveParseIfCondition(
     }
 }
 
-//TODO: make this a distinct enum type?
 const DefineGeneration = u32;
 
 fn directiveResolveMacro(
