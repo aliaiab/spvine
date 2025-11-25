@@ -5,14 +5,24 @@ pub fn build(builder: *std.Build) void {
     const check = builder.step("check", "Check if the project compiles");
 
     const spvine_module = builder.addModule("spvine", .{
+        .root_source_file = builder.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const exe_module = builder.createModule(.{
         .root_source_file = builder.path("src/main.zig"),
+        .imports = &.{.{
+            .name = "spvine",
+            .module = spvine_module,
+        }},
         .target = target,
         .optimize = optimize,
     });
 
     const exe_check = builder.addExecutable(.{
         .name = "checked_bin",
-        .root_module = spvine_module,
+        .root_module = exe_module,
         .use_llvm = false,
     });
 
@@ -20,7 +30,7 @@ pub fn build(builder: *std.Build) void {
 
     const exe = builder.addExecutable(.{
         .name = "spvine",
-        .root_module = spvine_module,
+        .root_module = exe_module,
     });
 
     const use_llvm = optimize == .ReleaseFast;

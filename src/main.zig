@@ -1,6 +1,3 @@
-pub const glsl = @import("glsl.zig");
-pub const spirv = @import("spirv.zig");
-
 pub fn main() !void {
     var test_glsl_path: []const u8 = "src/test.glsl";
 
@@ -136,6 +133,9 @@ test {
 }
 
 const std = @import("std");
-const Parser = glsl.Parser;
-const Ast = glsl.Ast;
-const Tokenizer = glsl.Tokenizer;
+const spvine = @import("spvine");
+const glsl = spvine.glsl;
+const spirv = spvine.spirv;
+const Parser = spvine.glsl.Parser;
+const Ast = spvine.glsl.Ast;
+const Tokenizer = spvine.glsl.Tokenizer;
