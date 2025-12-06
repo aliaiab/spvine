@@ -1,5 +1,7 @@
 pub fn main() !void {
-    var test_glsl_path: []const u8 = "src/test.glsl";
+    var glsl_path: []const u8 = "src/test.glsl";
+
+    var dep_file_path: ?[]const u8 = null;
 
     var optimization_flags: spirv.Ir.OptimizationFlags = .{};
     var should_print_ast: bool = false;
@@ -14,37 +16,47 @@ pub fn main() !void {
             if (opt_flag[0] == '-') {
                 if (std.mem.eql(u8, opt_flag, "-const_fold")) {
                     optimization_flags.enable_constant_folding = true;
+                    continue;
                 }
 
                 if (std.mem.eql(u8, opt_flag, "-const_hoist")) {
                     optimization_flags.enable_constant_hoisting = true;
+                    continue;
                 }
 
                 if (std.mem.eql(u8, opt_flag, "-debug_print_ast")) {
                     should_print_ast = true;
+                    continue;
                 }
 
                 if (std.mem.eql(u8, opt_flag, "-debug_print_ir")) {
                     should_print_ir = true;
+                    continue;
                 }
+
+                std.debug.print("Invalid flag\n", .{});
+
+                std.os.linux.exit(-1);
             } else {
                 const ext = std.fs.path.extension(opt_flag);
 
                 if (std.mem.eql(u8, ext, ".glsl")) {
-                    test_glsl_path = opt_flag;
+                    glsl_path = opt_flag;
+                } else {
+                    //dep file
+                    dep_file_path = opt_flag;
                 }
             }
         }
     }
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    // defer std.debug.assert(gpa.deinit() != .leak);
+    defer if (false) std.debug.assert(gpa.deinit() != .leak);
 
-    var allocator = gpa.allocator();
-
-    if (@import("builtin").mode != .Debug) {
-        allocator = std.heap.smp_allocator;
-    }
+    const allocator = if (@import("builtin").mode == .Debug)
+        gpa.allocator()
+    else
+        std.heap.smp_allocator;
 
     var stderr_buffer: [1024]u8 = undefined;
     var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
@@ -54,7 +66,7 @@ pub fn main() !void {
         stderr.flush() catch @panic("Flush error");
     }
 
-    const file = try std.fs.cwd().openFile(test_glsl_path, .{});
+    const file = try std.fs.cwd().openFile(glsl_path, .{});
     defer file.close();
 
     const test_glsl = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
@@ -74,7 +86,7 @@ pub fn main() !void {
         allocator,
         ast_node_arena,
         test_glsl,
-        test_glsl_path,
+        glsl_path,
     );
     defer ast.deinit(allocator);
 
@@ -108,9 +120,29 @@ pub fn main() !void {
     const errors = try sema.analyse(ast, allocator);
     defer allocator.free(errors);
 
+    var dep_file_data: std.ArrayList(u8) = .empty;
+    defer dep_file_data.deinit(allocator);
+
+    try dep_file_data.appendSlice(allocator, glsl_path);
+    try dep_file_data.appendSlice(allocator, " : ");
+
+    for (ast.source_names[1..]) |include_path| {
+        try dep_file_data.appendSlice(allocator, include_path);
+        try dep_file_data.appendSlice(allocator, " ");
+    }
+
+    try std.fs.cwd().writeFile(.{
+        .sub_path = dep_file_path.?,
+        .data = dep_file_data.items,
+        .flags = .{},
+    });
+
     if (errors.len != 0) {
         try glsl.error_render.printErrors(ast, &sema, errors, stderr);
 
+        try stderr.flush();
+
+        // std.process.exit(255);
         return;
     }
 

@@ -1,7 +1,6 @@
-pub fn build(builder: *std.Build) void {
+pub fn build(builder: *std.Build) !void {
     const target = builder.standardTargetOptions(.{});
     const optimize = builder.standardOptimizeOption(.{});
-
     const check = builder.step("check", "Check if the project compiles");
 
     const spvine_module = builder.addModule("spvine", .{
@@ -43,6 +42,16 @@ pub fn build(builder: *std.Build) void {
     const run_cmd = builder.addRunArtifact(exe);
 
     run_cmd.step.dependOn(builder.getInstallStep());
+
+    run_cmd.addFileInput(.{ .cwd_relative = "src/test.glsl" });
+
+    try run_cmd.step.addWatchInput(.{ .cwd_relative = "src/test.glsl" });
+
+    const temp_path = builder.makeTempPath();
+
+    _ = run_cmd.addDepFileOutputArg(temp_path);
+    // run_cmd.expectStdErrEqual("");
+    run_cmd.expectExitCode(0);
 
     if (builder.args) |args| {
         run_cmd.addArgs(args);

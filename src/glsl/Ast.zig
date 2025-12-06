@@ -394,6 +394,8 @@ pub const NodePointer = packed struct(u64) {
     };
 
     pub fn relativeFrom(parent: NodePointer, node_index: NodeRelativePointer) NodePointer {
+        if (node_index == NodeRelativePointer.nil) return .nil;
+
         const offset: i64 = node_index.relative_ptr;
 
         const base: i64 = @intCast(parent.data_ptr);
