@@ -46,6 +46,7 @@ u32 hash1(u32 n) {
     TestStruct funk = 3;
     if (funk) {
         funk = false;
+        funk = (1 + true) + (true + 1);
         
         return true;
     }  

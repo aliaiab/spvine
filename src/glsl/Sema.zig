@@ -97,7 +97,7 @@ pub fn analyseStructDefinition(
     }
 
     if (self.type_map.get(ast.tokenString(definition.name))) |type_index| {
-        const type_data = self.types.items[type_index.toArrayIndex().?];
+        const type_data = self.types.items[type_index.toAggregateIndex().?];
 
         try self.errors.append(self.gpa, .{
             .tag = .identifier_redefined,
@@ -111,7 +111,7 @@ pub fn analyseStructDefinition(
         });
     }
 
-    const type_index: TypeIndex = .fromArrayIndex(self.types.items.len);
+    const type_index: TypeIndex = .fromAggregateIndex(self.types.items.len);
 
     try self.types.append(self.gpa, .{
         .@"struct" = .{
@@ -332,7 +332,9 @@ pub fn analyseStatement(
 
                 const coerced_type = coerceTypeAssign(type_index, expression_result.type_index);
 
-                if (coerced_type == .erroring and type_index != .erroring and expression_result.type_index != .erroring) {
+                if (coerced_type == .erroring) {
+                    @branchHint(.cold);
+
                     try self.errors.append(self.gpa, .{
                         .tag = .type_mismatch,
                         .anchor = .{ .node = .relativeFrom(statement_node, var_init.expression) },
@@ -452,7 +454,8 @@ pub fn analyseStatement(
 
             const coerced_type = coerceTypeAssign(procedure.general_data.return_type, expr_type);
 
-            if (coerced_type == .erroring and procedure.general_data.return_type != .erroring and expr_type != .erroring) {
+            if (coerced_type == .erroring) {
+                @branchHint(.cold);
                 try self.errors.append(self.gpa, .{
                     .tag = .type_mismatch,
                     .anchor = if (statement_return.expression != Ast.NodeRelativePointer.nil) .{
@@ -628,7 +631,7 @@ pub fn analyseArgList(
             var expr_type_prim: TypeIndex.TypeIndexData = @bitCast(@intFromEnum(expr_type.type_index));
 
             //This canonicalizes primitive types like literal_uint -> uint
-            if (expr_type.type_index.toArrayIndex() == null) {
+            if (expr_type.type_index.toAggregateIndex() == null) {
                 expr_type_prim.literal = 0;
             }
 
@@ -868,7 +871,8 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
 
             const comparison_type = coerceType(lhs_type.type_index, rhs_type.type_index);
 
-            if (comparison_type == .erroring and lhs_type.type_index != .erroring and rhs_type.type_index != .erroring) {
+            if (comparison_type == .erroring) {
+                @branchHint(.cold);
                 try self.errors.append(self.gpa, .{
                     .tag = .type_mismatch,
                     .anchor = .{ .token = binary_expr.op_token },
@@ -921,7 +925,8 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
                 else => coerceType(lhs.type_index, rhs.type_index),
             };
 
-            if (coerced_type == .erroring and lhs.type_index != .erroring and rhs.type_index != .erroring) {
+            if (coerced_type == .erroring) {
+                @branchHint(.cold);
                 try self.errors.append(self.gpa, .{
                     .tag = .type_mismatch,
                     .anchor = .{ .node = expression },
@@ -995,7 +1000,8 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
 
             const resultant_type = coerceTypeAssign(lhs_type.type_index, rhs_type.type_index);
 
-            if (resultant_type == .erroring and lhs_type.type_index != .erroring and rhs_type.type_index != .erroring) {
+            if (resultant_type == .erroring) {
+                @branchHint(.cold);
                 try self.errors.append(self.gpa, .{
                     .tag = .type_mismatch,
                     .anchor = .{ .token = binary_expr.op_token },
@@ -1150,7 +1156,7 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
             const rhs_identifier = rhs_ptr.data(Ast.Node.Identifier);
 
             //TODO: support vectors
-            if (lhs_type.type_index != .erroring and lhs_type.type_index.toArrayIndex() == null) {
+            if (lhs_type.type_index != .erroring and lhs_type.type_index.toAggregateIndex() == null) {
                 try self.errors.append(self.gpa, .{
                     .anchor = .{ .node = expression },
                     .tag = .cannot_perform_field_access,
@@ -1162,7 +1168,7 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
                 return .{ .ir_node = .nil, .type_index = .erroring };
             }
 
-            const type_data = self.types.items[lhs_type.type_index.toArrayIndex().?];
+            const type_data = self.types.items[lhs_type.type_index.toAggregateIndex().?];
 
             const maybe_field = type_data.@"struct".fields.get(ast.tokenString(rhs_identifier.token));
 
@@ -1352,15 +1358,15 @@ pub fn coerceTypeAddOrSub(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
 }
 
 pub fn coerceType(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
+    if (!lhs.toData().non_erroring or !rhs.toData().non_erroring) {
+        return .erroring_virally;
+    }
+
     if (lhs == rhs) {
         return lhs;
     }
 
-    if (lhs == .erroring or rhs == .erroring) {
-        return .erroring;
-    }
-
-    if (lhs.toArrayIndex() != null or rhs.toArrayIndex() != null) {
+    if (lhs.toAggregateIndex() != null or rhs.toAggregateIndex() != null) {
         return .erroring;
     }
 
@@ -1387,10 +1393,8 @@ pub fn coerceType(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
 
     result_type.literal = lhs_primitive.literal & rhs_primitive.literal;
 
-    if (lhs_primitive.null_or_void > 0 or rhs_primitive.null_or_void > 0) {
-        if (lhs == .void or rhs == .void) {
-            return .erroring;
-        }
+    if (lhs == .void or rhs == .void) {
+        return .erroring;
     }
 
     if (lhs_primitive.scalar_type == .integer and rhs_primitive.scalar_type == .integer) {
@@ -1415,7 +1419,7 @@ pub fn printTypeName(self: Sema, ast: Ast, writer: *std.Io.Writer, type_index: T
         return;
     }
 
-    if (type_index.toArrayIndex() == null) {
+    if (type_index.toAggregateIndex() == null) {
         var canon_type_data = type_index.toData();
 
         canon_type_data.literal = 0;
@@ -1425,7 +1429,7 @@ pub fn printTypeName(self: Sema, ast: Ast, writer: *std.Io.Writer, type_index: T
         return try writer.writeAll(@tagName(canon_type));
     }
 
-    const type_data = &self.types.items[type_index.toArrayIndex().?];
+    const type_data = &self.types.items[type_index.toAggregateIndex().?];
 
     switch (type_data.*) {
         .@"struct" => |struct_data| {
@@ -1537,7 +1541,7 @@ pub fn lowerType(self: *Sema, type_index: TypeIndex) !spirv.Ir.Node {
         return cached_node;
     }
 
-    if (type_index.toArrayIndex() != null) {
+    if (type_index.toAggregateIndex() != null) {
         @panic("unimplemented: Lowering of composite types not yet supported!");
     }
 
@@ -1647,8 +1651,25 @@ pub const Type = union(enum) {
 pub const TypeIndex = enum(u64) {
     ///Used for tagging erroring types such that we don't contaminate future error messages with bad error checking
     erroring = 0,
+    ///Represents an error type that has been produced as a result of type coercion between one or two other error types
+    erroring_virally = @bitCast(TypeIndexData{
+        .non_erroring = false,
+        .error_is_viral = true,
+        .sign = 0,
+        .matrix_row_count = 0,
+        .matrix_column_count = 0,
+        .literal = 0,
+        .scalar_type = .integer,
+    }),
 
-    void,
+    void = @bitCast(TypeIndexData{
+        .sign = 0,
+        .matrix_row_count = 0,
+        .matrix_column_count = 0,
+        .literal = 0,
+        .scalar_type = .integer,
+        .is_void = true,
+    }),
     uint = @bitCast(TypeIndexData{
         .sign = 0,
         .matrix_row_count = 0,
@@ -1968,7 +1989,7 @@ pub const TypeIndex = enum(u64) {
         },
     )) + 1;
 
-    pub fn fromArrayIndex(array_index: usize) TypeIndex {
+    pub fn fromAggregateIndex(array_index: usize) TypeIndex {
         const result: TypeIndexData = .{
             .array_length = 0,
             .literal = 0,
@@ -1982,7 +2003,7 @@ pub const TypeIndex = enum(u64) {
         return @enumFromInt(@as(u64, @bitCast(result)));
     }
 
-    pub fn toArrayIndex(type_index: TypeIndex) ?usize {
+    pub fn toAggregateIndex(type_index: TypeIndex) ?usize {
         const type_data: TypeIndexData = @bitCast(@intFromEnum(type_index));
 
         if (type_data.aggregate_index == 0) return null;
@@ -2047,13 +2068,13 @@ pub const TypeIndex = enum(u64) {
             .expression_binary_geql,
             .expression_unary_minus,
             => {
-                if (self.toArrayIndex() != null) {
+                if (self.toAggregateIndex() != null) {
                     return false;
                 }
 
                 const primitive_type: TypeIndexData = @bitCast(@intFromEnum(self));
 
-                if (primitive_type.null_or_void != 0b11 or
+                if (primitive_type.is_void or
                     primitive_type.scalar_type == .bool)
                 {
                     return false;
@@ -2067,13 +2088,13 @@ pub const TypeIndex = enum(u64) {
             .expression_binary_assign_bitwise_shift_left,
             .expression_binary_assign_bitwise_shift_right,
             => {
-                if (self.toArrayIndex() != null) {
+                if (self.toAggregateIndex() != null) {
                     return false;
                 }
 
                 const primitive_type: TypeIndexData = @bitCast(@intFromEnum(self));
 
-                if (primitive_type.null_or_void != 0b11 or
+                if (primitive_type.is_void or
                     primitive_type.scalar_type != .integer)
                 {
                     return false;
@@ -2097,8 +2118,11 @@ pub const TypeIndex = enum(u64) {
     pub const TypeIndexData = packed struct(u64) {
         //If this is zero, the type is not an array
         array_length: u32 = 0,
-        //Used to represent null and void
-        null_or_void: u2 = 0b11,
+        is_void: bool = false,
+        //Set to false if this type is an erroring type
+        non_erroring: bool = true,
+        //Set to true if this erroring type is the result of the coercion of one or two erroring types
+        error_is_viral: bool = false,
         literal: u1,
         sign: u1,
         scalar_type: ScalarType,
@@ -2106,7 +2130,7 @@ pub const TypeIndex = enum(u64) {
         matrix_row_count: u2,
         matrix_column_count: u2,
         //Index into the type array - 1
-        aggregate_index: u22 = 0,
+        aggregate_index: u21 = 0,
 
         pub const ScalarType = enum(u2) {
             integer = 0b00,
