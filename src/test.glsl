@@ -26,7 +26,7 @@ struct Lol {
 #define gunk uint
 #endif
 
-gunk gunkFunc(uint x, uint y) {
+gunk gunkFunc(u32 x, u32 y) {
     return x + y;
 }
 
@@ -34,6 +34,7 @@ struct TestStruct {
     uint x;
     gunk y;
 };
+
 #if 1
 u32 hash1(u32 n) {
     // n = (n << 13) ^ n;

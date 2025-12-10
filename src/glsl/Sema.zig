@@ -738,14 +738,6 @@ pub fn resolveTypeFromIdentifier(self: *Sema, ast: Ast, type_expr_token: Ast.Tok
         .identifier => {
             const identifier_string = ast.tokenString(type_expr_token);
 
-            if (reserved_identifiers.get(identifier_string)) |_| {
-                try self.errors.append(self.gpa, .{
-                    .tag = .reserved_keyword_token,
-                    .anchor = .{ .token = type_expr_token },
-                });
-                return .erroring;
-            }
-
             if (buildtin_typename_map.get(identifier_string)) |builtin_type| {
                 return builtin_type;
             }
@@ -757,7 +749,13 @@ pub fn resolveTypeFromIdentifier(self: *Sema, ast: Ast, type_expr_token: Ast.Tok
                 });
                 return .erroring;
             };
-
+            if (reserved_identifiers.get(identifier_string)) |_| {
+                try self.errors.append(self.gpa, .{
+                    .tag = .reserved_keyword_token,
+                    .anchor = .{ .token = type_expr_token },
+                });
+                return .erroring;
+            }
             return type_index;
         },
         else => unreachable,
@@ -1343,8 +1341,6 @@ pub fn coerceTypeMul(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
     }
 
     return .erroring;
-    // vecn = scalar * vecn
-    // matnxk = scalar * matnxk
 }
 
 pub fn coerceTypeAddOrSub(lhs: TypeIndex, rhs: TypeIndex) TypeIndex {
@@ -1660,6 +1656,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .integer,
+        .scalar_bit_count = .@"8",
     }),
 
     void = @bitCast(TypeIndexData{
@@ -1668,6 +1665,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .integer,
+        .scalar_bit_count = .@"8",
         .is_void = true,
     }),
     uint = @bitCast(TypeIndexData{
@@ -1676,6 +1674,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .integer,
+        .scalar_bit_count = .@"32",
     }),
     int = @bitCast(TypeIndexData{
         .sign = 1,
@@ -1683,6 +1682,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .integer,
+        .scalar_bit_count = .@"32",
     }),
     float = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1690,6 +1690,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .float,
+        .scalar_bit_count = .@"32",
     }),
     double = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1697,6 +1698,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .double,
+        .scalar_bit_count = .@"64",
     }),
     bool = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1704,6 +1706,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .bool,
+        .scalar_bit_count = .@"8",
     }),
 
     uvec2 = @bitCast(TypeIndexData{
@@ -1712,6 +1715,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .integer,
+        .scalar_bit_count = .@"32",
     }),
     uvec3 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1719,6 +1723,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .integer,
+        .scalar_bit_count = .@"32",
     }),
     uvec4 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1726,6 +1731,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .integer,
+        .scalar_bit_count = .@"32",
     }),
 
     ivec2 = @bitCast(TypeIndexData{
@@ -1734,6 +1740,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .integer,
+        .scalar_bit_count = .@"32",
     }),
     ivec3 = @bitCast(TypeIndexData{
         .sign = 1,
@@ -1741,6 +1748,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .integer,
+        .scalar_bit_count = .@"32",
     }),
     ivec4 = @bitCast(TypeIndexData{
         .sign = 1,
@@ -1748,6 +1756,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .integer,
+        .scalar_bit_count = .@"32",
     }),
 
     bvec2 = @bitCast(TypeIndexData{
@@ -1756,6 +1765,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .bool,
+        .scalar_bit_count = .@"8",
     }),
     bvec3 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1763,6 +1773,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .bool,
+        .scalar_bit_count = .@"8",
     }),
     bvec4 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1770,6 +1781,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .bool,
+        .scalar_bit_count = .@"8",
     }),
 
     vec2 = @bitCast(TypeIndexData{
@@ -1778,6 +1790,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .float,
+        .scalar_bit_count = .@"32",
     }),
     vec3 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1785,6 +1798,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .float,
+        .scalar_bit_count = .@"32",
     }),
     vec4 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1792,6 +1806,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .float,
+        .scalar_bit_count = .@"32",
     }),
 
     dvec2 = @bitCast(TypeIndexData{
@@ -1800,6 +1815,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .double,
+        .scalar_bit_count = .@"64",
     }),
     dvec3 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1807,6 +1823,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .double,
+        .scalar_bit_count = .@"64",
     }),
     dvec4 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1814,6 +1831,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 0,
         .scalar_type = .double,
+        .scalar_bit_count = .@"64",
     }),
 
     mat2x2 = @bitCast(TypeIndexData{
@@ -1822,6 +1840,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 1,
         .literal = 0,
         .scalar_type = .float,
+        .scalar_bit_count = .@"32",
     }),
     mat3x3 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1829,6 +1848,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 2,
         .literal = 0,
         .scalar_type = .float,
+        .scalar_bit_count = .@"32",
     }),
     mat4x4 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1836,6 +1856,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 3,
         .literal = 0,
         .scalar_type = .float,
+        .scalar_bit_count = .@"32",
     }),
 
     mat2x3 = @bitCast(TypeIndexData{
@@ -1844,6 +1865,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_row_count = 2,
         .literal = 0,
         .scalar_type = .float,
+        .scalar_bit_count = .@"32",
     }),
     mat2x4 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1851,6 +1873,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_row_count = 3,
         .literal = 0,
         .scalar_type = .float,
+        .scalar_bit_count = .@"32",
     }),
 
     mat3x2 = @bitCast(TypeIndexData{
@@ -1859,6 +1882,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_row_count = 1,
         .literal = 0,
         .scalar_type = .float,
+        .scalar_bit_count = .@"32",
     }),
     mat3x4 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1866,6 +1890,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_row_count = 3,
         .literal = 0,
         .scalar_type = .float,
+        .scalar_bit_count = .@"32",
     }),
     mat4x2 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1873,6 +1898,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_row_count = 1,
         .literal = 0,
         .scalar_type = .float,
+        .scalar_bit_count = .@"32",
     }),
     mat4x3 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1880,6 +1906,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_row_count = 2,
         .literal = 0,
         .scalar_type = .float,
+        .scalar_bit_count = .@"32",
     }),
 
     dmat2x2 = @bitCast(TypeIndexData{
@@ -1888,6 +1915,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 1,
         .literal = 0,
         .scalar_type = .double,
+        .scalar_bit_count = .@"64",
     }),
     dmat3x3 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1895,6 +1923,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 2,
         .literal = 0,
         .scalar_type = .double,
+        .scalar_bit_count = .@"64",
     }),
     dmat4x4 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1902,6 +1931,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 3,
         .literal = 0,
         .scalar_type = .double,
+        .scalar_bit_count = .@"64",
     }),
 
     dmat2x3 = @bitCast(TypeIndexData{
@@ -1910,6 +1940,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_row_count = 2,
         .literal = 0,
         .scalar_type = .double,
+        .scalar_bit_count = .@"64",
     }),
     dmat3x4 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1917,6 +1948,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_row_count = 3,
         .literal = 0,
         .scalar_type = .double,
+        .scalar_bit_count = .@"64",
     }),
     dmat2x4 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1924,6 +1956,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_row_count = 3,
         .literal = 0,
         .scalar_type = .double,
+        .scalar_bit_count = .@"64",
     }),
     dmat4x3 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1931,6 +1964,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_row_count = 2,
         .literal = 0,
         .scalar_type = .double,
+        .scalar_bit_count = .@"64",
     }),
 
     dmat3x2 = @bitCast(TypeIndexData{
@@ -1939,6 +1973,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_row_count = 1,
         .literal = 0,
         .scalar_type = .double,
+        .scalar_bit_count = .@"64",
     }),
     dmat4x2 = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1946,6 +1981,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_row_count = 1,
         .literal = 0,
         .scalar_type = .double,
+        .scalar_bit_count = .@"64",
     }),
 
     literal_uint = @bitCast(TypeIndexData{
@@ -1954,6 +1990,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 1,
         .scalar_type = .integer,
+        .scalar_bit_count = .@"32",
     }),
     literal_int = @bitCast(TypeIndexData{
         .sign = 1,
@@ -1961,6 +1998,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 1,
         .scalar_type = .integer,
+        .scalar_bit_count = .@"32",
     }),
     literal_float = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1968,6 +2006,7 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 1,
         .scalar_type = .float,
+        .scalar_bit_count = .@"32",
     }),
     literal_bool = @bitCast(TypeIndexData{
         .sign = 0,
@@ -1975,19 +2014,10 @@ pub const TypeIndex = enum(u64) {
         .matrix_column_count = 0,
         .literal = 1,
         .scalar_type = .bool,
+        .scalar_bit_count = .@"8",
     }),
 
     _,
-
-    pub const array_index_begin: u64 = @as(u64, @bitCast(
-        TypeIndexData{
-            .literal = 1,
-            .sign = 1,
-            .scalar_type = @enumFromInt(3),
-            .matrix_row_count = 3,
-            .matrix_column_count = 3,
-        },
-    )) + 1;
 
     pub fn fromAggregateIndex(array_index: usize) TypeIndex {
         const result: TypeIndexData = .{
@@ -1998,6 +2028,7 @@ pub const TypeIndex = enum(u64) {
             .matrix_row_count = 0,
             .matrix_column_count = 0,
             .aggregate_index = @intCast(array_index + 1),
+            .scalar_bit_count = .@"8",
         };
 
         return @enumFromInt(@as(u64, @bitCast(result)));
@@ -2116,8 +2147,6 @@ pub const TypeIndex = enum(u64) {
     }
 
     pub const TypeIndexData = packed struct(u64) {
-        //If this is zero, the type is not an array
-        array_length: u32 = 0,
         is_void: bool = false,
         //Set to false if this type is an erroring type
         non_erroring: bool = true,
@@ -2125,18 +2154,28 @@ pub const TypeIndex = enum(u64) {
         error_is_viral: bool = false,
         literal: u1,
         sign: u1,
+        scalar_bit_count: BitCount,
         scalar_type: ScalarType,
         ///Used to reprsent vector lengths
         matrix_row_count: u2,
         matrix_column_count: u2,
         //Index into the type array - 1
-        aggregate_index: u21 = 0,
+        aggregate_index: u19 = 0,
+        //If this is zero, the type is not an array
+        array_length: u32 = 0,
 
         pub const ScalarType = enum(u2) {
             integer = 0b00,
             bool = 0b01,
             float = 0b10,
             double = 0b11,
+        };
+
+        pub const BitCount = enum(u2) {
+            @"8" = 0,
+            @"16" = 1,
+            @"32" = 2,
+            @"64" = 3,
         };
     };
 };
