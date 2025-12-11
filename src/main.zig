@@ -62,9 +62,6 @@ pub fn main() !void {
     var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
 
     const stderr = &stderr_writer.interface;
-    defer {
-        stderr.flush() catch @panic("Flush error");
-    }
 
     const file = try std.fs.cwd().openFile(glsl_path, .{});
     defer file.close();
@@ -92,19 +89,8 @@ pub fn main() !void {
 
     if (ast.errors.len != 0) {
         try glsl.error_render.printErrors(ast, null, ast.errors, stderr);
-
+        try stderr.flush();
         return;
-    }
-
-    if (should_print_ast) {
-        var unbuffered_stderr = std.fs.File.stderr().writer(&.{});
-
-        try unbuffered_stderr.interface.print("\nglsl.Ast:\n", .{});
-
-        try ast.print(&unbuffered_stderr.interface, allocator);
-
-        try unbuffered_stderr.interface.print("\n", .{});
-        try unbuffered_stderr.interface.flush();
     }
 
     var sema: glsl.Sema = .{
@@ -130,33 +116,44 @@ pub fn main() !void {
         try dep_file_data.appendSlice(allocator, include_path);
         try dep_file_data.appendSlice(allocator, " ");
     }
-
-    try std.fs.cwd().writeFile(.{
-        .sub_path = dep_file_path.?,
-        .data = dep_file_data.items,
-        .flags = .{},
-    });
+    if (dep_file_path != null) {
+        try std.fs.cwd().writeFile(.{
+            .sub_path = dep_file_path.?,
+            .data = dep_file_data.items,
+            .flags = .{},
+        });
+    }
 
     if (errors.len != 0) {
         try glsl.error_render.printErrors(ast, &sema, errors, stderr);
 
         try stderr.flush();
+    } else {
+        var schedule_context: spirv.Ir.OrderScheduleContext = .{
+            .allocator = allocator,
+        };
+        defer schedule_context.deinit(allocator);
 
-        // std.process.exit(255);
-        return;
+        try sema.spirv_ir.computeGlobalOrdering(&schedule_context, allocator);
+
+        if (should_print_ir) {
+            try stderr.print("spirv.Ir:\n\n", .{});
+
+            try sema.spirv_ir.printNodes(stderr, schedule_context);
+        }
     }
 
-    var schedule_context: spirv.Ir.OrderScheduleContext = .{
-        .allocator = allocator,
-    };
-    defer schedule_context.deinit(allocator);
+    try stderr.flush();
 
-    try sema.spirv_ir.computeGlobalOrdering(&schedule_context, allocator);
+    if (should_print_ast) {
+        var unbuffered_stderr = std.fs.File.stderr().writer(&.{});
 
-    if (should_print_ir) {
-        try stderr.print("spirv.Ir:\n\n", .{});
+        try unbuffered_stderr.interface.print("\nglsl.Ast:\n", .{});
 
-        try sema.spirv_ir.printNodes(stderr, schedule_context);
+        try ast.print(&unbuffered_stderr.interface, allocator);
+
+        try unbuffered_stderr.interface.print("\n", .{});
+        try unbuffered_stderr.interface.flush();
     }
 }
 

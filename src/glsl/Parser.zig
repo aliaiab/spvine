@@ -77,6 +77,15 @@ pub fn parse(self: *Parser) !void {
 
                 try root_nodes.append(self.gpa, struct_def);
             },
+            .keyword_uniform,
+            .keyword_buffer,
+            .keyword_out,
+            .keyword_in,
+            => {
+                const variable_decl = try self.parseVariableDecl();
+
+                try root_nodes.append(self.gpa, variable_decl);
+            },
             .identifier,
             => {
                 const proc = try self.parseProcedure();
@@ -90,6 +99,21 @@ pub fn parse(self: *Parser) !void {
     }
 
     self.root_decls = try root_nodes.toOwnedSlice(self.gpa);
+}
+
+pub fn parseVariableDecl(self: *Parser) !Ast.NodePointer {
+    var node = try self.allocateNode(.variable_decl);
+    const qualifier = try self.parseTypeQualifier();
+    const type_expr = try self.parseTypeExpr();
+    const name = try self.expectToken(.identifier);
+    _ = try self.expectToken(.semicolon);
+
+    node.data(Ast.Node.VariableDecl).* = .{
+        .name = name,
+        .qualifier = .relativeTo(node, qualifier),
+        .type_expr = .relativeTo(node, type_expr),
+    };
+    return node;
 }
 
 pub fn parseStruct(self: *Parser) !Ast.NodePointer {
@@ -201,6 +225,34 @@ pub fn parseParam(self: *Parser) !Ast.NodePointer {
     };
 
     return param_expr_node;
+}
+
+pub fn parseTypeQualifier(self: *Parser) !Ast.NodePointer {
+    const node = try self.allocateNode(.type_qualifier);
+    var tokens: std.ArrayList(Ast.TokenIndex) = .empty;
+    defer tokens.deinit(self.gpa);
+
+    while (true) {
+        const token = self.peekToken();
+        switch (token.tag) {
+            .keyword_uniform,
+            .keyword_out,
+            .keyword_in,
+            => {
+                try tokens.append(self.gpa, token);
+                _ = try self.nextToken();
+            },
+            else => break,
+        }
+    }
+
+    node.data(Ast.Node.TypeQualifier).* = .{
+        .tokens = try self.ast_node_arena.dupe(
+            Ast.TokenIndex,
+            tokens.items,
+        ),
+    };
+    return node;
 }
 
 pub fn parseVariableQualifier(self: *Parser) !Ast.TokenIndex {

@@ -42,7 +42,7 @@ u32 hash1(u32 n) {
     gunk f;
     f = 3;
     f[3] = 3;
-    u32 k[1 + 3 * 2] = 3;
+    u32 k[SOME_CONST] = 3;
 
     TestStruct funk = 3;
     if (funk) {

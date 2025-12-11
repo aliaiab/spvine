@@ -42,6 +42,9 @@ pub fn analyse(sema: *Sema, ast: Ast, allocator: std.mem.Allocator) ![]Ast.Error
                     }
                 };
             },
+            .variable_decl => {
+                try sema.analyseVariableDecl(ast, decl);
+            },
             .struct_definition => {
                 sema.analyseStructDefinition(ast, decl) catch |e| {
                     switch (e) {
@@ -54,6 +57,32 @@ pub fn analyse(sema: *Sema, ast: Ast, allocator: std.mem.Allocator) ![]Ast.Error
     }
 
     return try sema.errors.toOwnedSlice(allocator);
+}
+
+pub fn analyseVariableDecl(self: *Sema, ast: Ast, node: Ast.NodePointer) !void {
+    const variable_decl = node.data(Ast.Node.VariableDecl);
+    const variable_type = try self.resolveTypeFromTypeExpr(
+        ast,
+        .relativeFrom(node, variable_decl.type_expr),
+    );
+
+    const lowered_type = try self.lowerType(variable_type);
+
+    const ir_node = try self.spirv_ir.buildNodeOpVariable(
+        self.gpa,
+        lowered_type,
+        .Output,
+        .nil,
+    );
+
+    try self.scopeDefine(
+        ast,
+        variable_decl.name,
+        variable_type,
+        .in,
+        ir_node,
+        null,
+    );
 }
 
 pub fn analyseStructDefinition(
@@ -749,6 +778,7 @@ pub fn resolveTypeFromIdentifier(self: *Sema, ast: Ast, type_expr_token: Ast.Tok
                 });
                 return .erroring;
             };
+
             if (reserved_identifiers.get(identifier_string)) |_| {
                 try self.errors.append(self.gpa, .{
                     .tag = .reserved_keyword_token,
@@ -989,14 +1019,15 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
 
             const assignable = try self.isExpressionAssignable(ast, .relativeFrom(expression, binary_expr.left));
 
-            if (!assignable and lhs_type.type_index != .erroring and rhs_type.type_index != .erroring) {
+            const resultant_type = coerceTypeAssign(lhs_type.type_index, rhs_type.type_index);
+
+            if (!assignable and lhs_type.type_index.toData().non_erroring) {
+                @branchHint(.cold);
                 try self.errors.append(self.gpa, .{
                     .tag = .modified_const,
                     .anchor = .{ .node = .relativeFrom(expression, binary_expr.left) },
                 });
             }
-
-            const resultant_type = coerceTypeAssign(lhs_type.type_index, rhs_type.type_index);
 
             if (resultant_type == .erroring) {
                 @branchHint(.cold);
@@ -1012,7 +1043,8 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
                 });
             }
 
-            if (!resultant_type.isOperatorDefined(expression.tag) and resultant_type != .erroring) {
+            if (!resultant_type.isOperatorDefined(expression.tag) and resultant_type.toData().non_erroring) {
+                @branchHint(.cold);
                 try self.errors.append(self.gpa, .{
                     .tag = .type_incompatibility,
                     .anchor = .{ .node = expression },
@@ -1051,7 +1083,24 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
 
                     const identifier_def = try self.scopeResolve(ast, identifier_expression.token);
 
-                    if (identifier_def != null) identifier_def.?.ir_node = ir_node;
+                    if (identifier_def != null) {
+                        if (identifier_def.?.ir_node != spirv.Ir.Node.nil) {
+                            switch (self.spirv_ir.nodeTag(identifier_def.?.ir_node).*) {
+                                .variable => {
+                                    const lowered_type = try self.lowerType(identifier_def.?.type_index);
+                                    _ = try self.spirv_ir.buildNodeOpStore(
+                                        self.gpa,
+                                        lowered_type,
+                                        identifier_def.?.ir_node,
+                                        ir_node,
+                                    );
+                                },
+                                else => {
+                                    identifier_def.?.ir_node = ir_node;
+                                },
+                            }
+                        }
+                    }
                 },
                 .expression_literal_boolean => {
                     //TODO: lowering
@@ -1111,10 +1160,25 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
                 };
             }
 
-            //TODO: resolve the latest SSA value
+            var ir_node = definition.ir_node;
+
+            if (ir_node != spirv.Ir.Node.nil) {
+                switch (self.spirv_ir.nodeTag(ir_node).*) {
+                    .variable => {
+                        const lowered_type = try self.lowerType(definition.type_index);
+                        ir_node = try self.spirv_ir.buildNodeOpLoad(
+                            self.gpa,
+                            lowered_type,
+                            ir_node,
+                        );
+                    },
+                    else => {},
+                }
+            }
+
             return .{
                 .type_index = definition.type_index,
-                .ir_node = definition.ir_node,
+                .ir_node = ir_node,
             };
         },
         .expression_binary_proc_call => {
@@ -2139,6 +2203,7 @@ pub const TypeIndex = enum(u64) {
             => return switch (self) {
                 .void,
                 .erroring,
+                .erroring_virally,
                 => false,
                 else => true,
             },

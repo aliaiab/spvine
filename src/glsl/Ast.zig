@@ -416,6 +416,8 @@ pub const NodePointer = packed struct(u64) {
 pub const Node = struct {
     pub const Tag = enum(u6) {
         type_expr,
+        type_qualifier,
+        variable_decl,
         procedure,
         struct_definition,
         struct_field,
@@ -462,6 +464,8 @@ pub const Node = struct {
 
     pub const Data = union(Tag) {
         type_expr: TypeExpr,
+        type_qualifier: TypeQualifier,
+        variable_decl: VariableDecl,
         procedure: Procedure,
         struct_definition: StructDefinition,
         struct_field: StructField,
@@ -505,6 +509,12 @@ pub const Node = struct {
         expression_unary_minus: BinaryExpression,
     };
 
+    pub const VariableDecl = struct {
+        qualifier: NodeRelativePointer,
+        type_expr: NodeRelativePointer,
+        name: TokenIndex,
+    };
+
     pub const StructDefinition = struct {
         name: TokenIndex,
         fields: []const NodeRelativePointer,
@@ -529,6 +539,10 @@ pub const Node = struct {
 
     pub const TypeExpr = struct {
         token: TokenIndex,
+    };
+
+    pub const TypeQualifier = struct {
+        tokens: []const TokenIndex,
     };
 
     pub const Procedure = struct {
@@ -649,6 +663,8 @@ pub fn printNode(
         else => {},
     }
 
+    try writer.print("\n", .{});
+
     for (0..depth) |level| {
         const is_terminated: bool = blk: {
             for (terminated_levels.items) |terminated_depth| {
@@ -707,6 +723,9 @@ pub fn printNode(
                             Token.Tag,
                             => {},
                             []const Ast.NodeRelativePointer => {
+                                sub_sibling_count += @intCast(@field(node_data, payload_field.name).len);
+                            },
+                            []const Ast.TokenIndex => {
                                 sub_sibling_count += @intCast(@field(node_data, payload_field.name).len);
                             },
                             else => {
@@ -768,8 +787,6 @@ pub fn printNode(
                         }
                     }
 
-                    try writer.print("\n", .{});
-
                     var sub_sibling_index: usize = 0;
 
                     inline for (std.meta.fields(@TypeOf(node_data))) |payload_field| {
@@ -807,6 +824,15 @@ pub fn printNode(
 
                                 if (field_value.len != 0) {
                                     sub_sibling_index += 1;
+                                }
+                            },
+                            []const Ast.TokenIndex => {
+                                for (field_value, 0..) |token, i| {
+                                    try writer.print("{s}", .{ast.tokenString(token)});
+
+                                    if (i != field_value.len - 1) {
+                                        try writer.print(", ", .{});
+                                    }
                                 }
                             },
                             else => {},

@@ -47,6 +47,20 @@ pub fn buildNodeOpLoad(
     });
 }
 
+pub fn buildNodeOpStore(
+    ir: *Ir,
+    allocator: std.mem.Allocator,
+    result_type: Node,
+    pointer: Node,
+    value: Node,
+) !Node {
+    return try ir.buildNode(allocator, .store, Node.Store, .{
+        .result_type = result_type,
+        .pointer = pointer,
+        .value = value,
+    });
+}
+
 pub fn buildNodeOpConvertSToF(
     ir: *Ir,
     allocator: std.mem.Allocator,
@@ -375,8 +389,11 @@ pub fn buildNode(
 
     //Some nodes must be considered distinct, like op_variable
     const can_deduplicate = switch (node_tag) {
-        .variable => false,
-        .return_value => false,
+        .variable,
+        .load,
+        .store,
+        .return_value,
+        => false,
         else => true,
     };
 
@@ -395,7 +412,9 @@ pub fn buildNode(
     ir.nodeTag(node).* = node_tag;
 
     switch (node_tag) {
-        .return_value => {
+        .return_value,
+        .store,
+        => {
             try ir.effect_nodes.append(allocator, node);
         },
         else => {},
@@ -492,6 +511,13 @@ pub fn computeGlobalOrderingForNode(
 
                 _ = try schedule_context.scheduleNodeStart(instruction.result_type) orelse continue;
                 _ = try schedule_context.scheduleNodeStart(instruction.pointer) orelse continue;
+            },
+            .store => {
+                const instruction = ir.nodeData(node, Node.Store);
+
+                _ = try schedule_context.scheduleNodeStart(instruction.result_type) orelse continue;
+                _ = try schedule_context.scheduleNodeStart(instruction.pointer) orelse continue;
+                _ = try schedule_context.scheduleNodeStart(instruction.value) orelse continue;
             },
             .convert_s_to_f => {
                 const instruction = ir.nodeData(node, Node.ConvertSToF);
@@ -596,6 +622,7 @@ pub const Node = packed struct(u32) {
 
         variable,
         load,
+        store,
         iadd,
         isub,
         imul,
@@ -614,6 +641,7 @@ pub const Node = packed struct(u32) {
         type_pointer: TypePointer,
         constant: Constant,
         load: Load,
+        store: Store,
         variable: Variable,
         iadd: MathsBinaryOp,
         isub: MathsBinaryOp,
@@ -654,6 +682,13 @@ pub const Node = packed struct(u32) {
         tag: Tag = .load,
         result_type: Node,
         pointer: Node,
+    };
+
+    pub const Store = struct {
+        tag: Tag = .load,
+        result_type: Node,
+        pointer: Node,
+        value: Node,
     };
 
     ///A scalar constant
@@ -785,6 +820,16 @@ pub fn printNodes(
 
                 try writer.writeAll("\n");
             },
+            .store => {
+                const instruction = ir.nodeData(node, Node.Store);
+
+                try writer.print("op_store: ", .{});
+
+                try ir.printOperand(writer, instruction.pointer, schedule_context);
+                try ir.printOperand(writer, instruction.value, schedule_context);
+
+                try writer.writeAll("\n");
+            },
             .iadd,
             .isub,
             .imul,
@@ -841,6 +886,7 @@ pub fn printOperand(
     node: Node,
     schedule_context: OrderScheduleContext,
 ) !void {
+    if (node == Node.nil) return;
     switch (ir.nodeTag(node).*) {
         .constant => {
             const constant = ir.nodeData(node, Node.Constant);
