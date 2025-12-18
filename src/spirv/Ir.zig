@@ -161,6 +161,20 @@ pub fn buildNodeOpIMul(
     lhs: Node,
     rhs: Node,
 ) !Node {
+    if (ir.optimization_flags.enable_constant_folding) {
+        if (ir.nodeTag(lhs).* == .constant and ir.nodeTag(rhs).* == .constant) {
+            const lhs_value = ir.nodeData(lhs, Node.Constant);
+            const rhs_value = ir.nodeData(rhs, Node.Constant);
+
+            const addition = lhs_value.value(i32) * rhs_value.value(i32);
+
+            return try ir.buildNode(allocator, .constant, Node.Constant, .{
+                .type = lhs_value.type,
+                .value_bits = @bitCast(addition),
+            });
+        }
+    }
+
     const result_node = try ir.buildNode(allocator, .imul, Node.MathsBinaryOp, .{
         .tag = .imul,
         .type = result_type,
@@ -826,6 +840,7 @@ pub fn printNodes(
                 try writer.print("op_store: ", .{});
 
                 try ir.printOperand(writer, instruction.pointer, schedule_context);
+                try writer.print(", ", .{});
                 try ir.printOperand(writer, instruction.value, schedule_context);
 
                 try writer.writeAll("\n");

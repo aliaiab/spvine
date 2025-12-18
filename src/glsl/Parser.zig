@@ -81,6 +81,7 @@ pub fn parse(self: *Parser) !void {
             .keyword_buffer,
             .keyword_out,
             .keyword_in,
+            .keyword_const,
             => {
                 const variable_decl = try self.parseVariableDecl();
 
@@ -106,12 +107,29 @@ pub fn parseVariableDecl(self: *Parser) !Ast.NodePointer {
     const qualifier = try self.parseTypeQualifier();
     const type_expr = try self.parseTypeExpr();
     const name = try self.expectToken(.identifier);
+
+    const left_bracket = try self.eatToken(.left_bracket);
+
+    var array_len_specifier: Ast.NodePointer = .nil;
+    var initializer: Ast.NodePointer = .nil;
+
+    if (left_bracket != null) {
+        array_len_specifier = try self.parseExpression(.{});
+        _ = try self.expectToken(.right_bracket);
+    }
+
+    if (try self.eatToken(.equals)) |_| {
+        initializer = try self.parseExpression(.{});
+    }
+
     _ = try self.expectToken(.semicolon);
 
     node.data(Ast.Node.VariableDecl).* = .{
         .name = name,
         .qualifier = .relativeTo(node, qualifier),
         .type_expr = .relativeTo(node, type_expr),
+        .array_len_specifier = .relativeTo(node, array_len_specifier),
+        .initializer = .relativeTo(node, initializer),
     };
     return node;
 }
@@ -238,6 +256,7 @@ pub fn parseTypeQualifier(self: *Parser) !Ast.NodePointer {
             .keyword_uniform,
             .keyword_out,
             .keyword_in,
+            .keyword_const,
             => {
                 try tokens.append(self.gpa, token);
                 _ = try self.nextToken();
@@ -438,7 +457,7 @@ pub fn parseStatement(self: *Parser) !Ast.NodePointer {
 pub fn parseExpression(
     self: *Parser,
     context: struct {
-        min_precedence: i32 = std.math.minInt(i32),
+        min_precedence: i32 = std.math.maxInt(i32),
         left: Ast.NodePointer = Ast.NodePointer.nil,
     },
 ) anyerror!Ast.NodePointer {
@@ -448,19 +467,21 @@ pub fn parseExpression(
         var node = Ast.NodePointer.nil;
 
         const binary = struct {
+            //Defines the precedence values for each operation as stated exactly by the glsl spec
             pub inline fn getPrecedence(comptime node_tag: Ast.Node.Tag) i32 {
                 return switch (node_tag) {
                     .expression_binary_field_access,
                     .expression_binary_array_access,
-                    => 10,
+                    => 2,
                     .expression_unary_minus,
-                    => 9,
+                    => 3,
                     .expression_binary_mul,
                     .expression_binary_div,
-                    => 8,
+                    .expression_binary_div_modulo,
+                    => 4,
                     .expression_binary_add,
                     .expression_binary_sub,
-                    => 7,
+                    => 5,
                     .expression_binary_bitwise_shift_left,
                     .expression_binary_bitwise_shift_right,
                     => 6,
@@ -468,19 +489,36 @@ pub fn parseExpression(
                     .expression_binary_gt,
                     .expression_binary_leql,
                     .expression_binary_geql,
-                    => 5,
+                    => 7,
                     .expression_binary_eql,
                     .expression_binary_neql,
-                    => 4,
-                    .expression_binary_bitwise_xor => 3,
-                    .expression_binary_assign,
+                    => 8,
+                    .expression_binary_bitwise_and,
+                    => 9,
+                    .expression_binary_bitwise_xor,
+                    => 10,
+                    .expression_binary_bitwise_or,
+                    => 11,
+                    .expression_binary_boolean_and,
+                    => 12,
+                    .expression_binary_boolean_xor,
+                    => 13,
+                    .expression_binary_boolean_or,
+                    => 14,
                     .expression_binary_assign_add,
                     .expression_binary_assign_sub,
                     .expression_binary_assign_mul,
                     .expression_binary_assign_div,
-                    => 2,
-                    .expression_binary_comma => 1,
-                    else => 0,
+                    .expression_binary_assign_bitwise_or,
+                    .expression_binary_assign_bitwise_and,
+                    .expression_binary_assign_bitwise_xor,
+                    .expression_binary_assign_bitwise_shift_left,
+                    .expression_binary_assign_bitwise_shift_right,
+                    .expression_binary_assign,
+                    => 16,
+                    .expression_binary_comma,
+                    => 17,
+                    else => std.math.maxInt(i32),
                 };
             }
 
@@ -505,7 +543,13 @@ pub fn parseExpression(
                     .unary_minus => .expression_unary_minus,
                     .period => .expression_binary_field_access,
                     .left_bracket => .expression_binary_array_access,
-                    .caret => .expression_binary_bitwise_xor,
+                    .@"^" => .expression_binary_bitwise_xor,
+                    .@"%" => .expression_binary_div_modulo,
+                    .@"|" => .expression_binary_bitwise_or,
+                    .@"|=" => .expression_binary_assign_bitwise_or,
+                    .@"||" => .expression_binary_boolean_or,
+                    .@"&&" => .expression_binary_boolean_and,
+                    .@"^^" => .expression_binary_boolean_xor,
                     .double_left_angled_bracket => .expression_binary_bitwise_shift_left,
                     .double_right_angled_bracket => .expression_binary_bitwise_shift_right,
                     .double_left_angled_bracket_equals => .expression_binary_assign_bitwise_shift_left,
@@ -634,7 +678,7 @@ pub fn parseExpression(
                 if (binary.getNodeType(tag)) |binary_node_type| {
                     const prec = binary.getPrecedence(binary_node_type);
 
-                    if (prec <= context.min_precedence) {
+                    if (prec >= context.min_precedence) {
                         break;
                     } else {
                         _ = try self.nextToken();

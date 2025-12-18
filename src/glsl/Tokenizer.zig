@@ -14,7 +14,12 @@ state: enum {
     bang,
     tilde,
     equals,
-    caret,
+
+    @"^",
+    @"&",
+    @"|",
+    @"%",
+
     single_comment,
     multi_comment,
     left_angled_bracket,
@@ -155,8 +160,17 @@ pub fn next(self: *Tokenizer) ?Token {
                 '=' => {
                     self.state = .equals;
                 },
+                '|' => {
+                    self.state = .@"|";
+                },
+                '%' => {
+                    self.state = .@"%";
+                },
                 '^' => {
-                    self.state = .caret;
+                    self.state = .@"^";
+                },
+                '&' => {
+                    self.state = .@"&";
                 },
                 '*' => {
                     self.state = .asterisk;
@@ -419,7 +433,45 @@ pub fn next(self: *Tokenizer) ?Token {
                     break;
                 },
             },
-            .caret => switch (char) {
+            .@"%" => switch (char) {
+                '=' => {
+                    token.tag = .@"%=";
+                    self.state = .start;
+                    self.index += 1;
+                    break;
+                },
+                else => {
+                    token.tag = .@"%";
+                    self.state = .start;
+                    break;
+                },
+            },
+            .@"&" => switch (char) {
+                '&' => {
+                    token.tag = .@"&&";
+                    self.state = .start;
+                    self.index += 1;
+                    break;
+                },
+                '=' => {
+                    token.tag = .@"&=";
+                    self.state = .start;
+                    self.index += 1;
+                    break;
+                },
+                else => {
+                    token.tag = .@"&";
+                    self.state = .start;
+                    break;
+                },
+            },
+            .@"^" => switch (char) {
+                '^' => {
+                    token.tag = .@"^^";
+                    self.state = .start;
+                    self.index += 1;
+                    break;
+                },
                 '=' => {
                     token.tag = .caret_equals;
                     self.state = .start;
@@ -427,7 +479,26 @@ pub fn next(self: *Tokenizer) ?Token {
                     break;
                 },
                 else => {
-                    token.tag = .caret;
+                    token.tag = .@"^";
+                    self.state = .start;
+                    break;
+                },
+            },
+            .@"|" => switch (char) {
+                '|' => {
+                    token.tag = .@"||";
+                    self.state = .start;
+                    self.index += 1;
+                    break;
+                },
+                '=' => {
+                    token.tag = .@"|=";
+                    self.state = .start;
+                    self.index += 1;
+                    break;
+                },
+                else => {
+                    token.tag = .@"|";
                     self.state = .start;
                     break;
                 },
@@ -636,7 +707,6 @@ pub const Token = struct {
         unary_plus,
         unary_bang,
         unary_tilde,
-        caret,
         caret_equals,
         equals,
         equals_equals,
@@ -646,6 +716,17 @@ pub const Token = struct {
         asterisk_equals,
         forward_slash,
         forward_slash_equals,
+        @"%",
+        @"%=",
+        @"|",
+        @"|=",
+        @"||",
+        @"&",
+        @"&&",
+        @"&=",
+        @"^^",
+        @"^",
+        @"^=",
 
         //TODO: potentially should be removed as token strings can now have non-canonical strings (with line continuation)
         pub fn lexeme(tag: Tag) ?[]const u8 {
@@ -736,7 +817,6 @@ pub const Token = struct {
                 .minus_equals => "-=",
                 .equals => "=",
                 .equals_equals => "==",
-                .caret => "^",
                 .caret_equals => "^=",
                 .bang, .unary_bang => "!",
                 .bang_equals => "!=",
@@ -745,6 +825,18 @@ pub const Token = struct {
                 .asterisk_equals => "*=",
                 .forward_slash => "/",
                 .forward_slash_equals => "/=",
+                .@"%",
+                .@"%=",
+                .@"&&",
+                .@"&",
+                .@"&=",
+                .@"||",
+                .@"|",
+                .@"|=",
+                .@"^^",
+                .@"^",
+                .@"^=",
+                => @tagName(tag),
             };
         }
     };

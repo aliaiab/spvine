@@ -24,33 +24,13 @@ pub fn analyse(sema: *Sema, ast: Ast, allocator: std.mem.Allocator) ![]Ast.Error
 
         switch (node_tag) {
             .procedure => {
-                sema.analyseProcedure(ast, decl) catch |e| {
-                    switch (e) {
-                        error.TypeMismatch,
-                        error.UndeclaredIdentifier,
-                        error.TypeIncompatibilty,
-                        error.ModifiedConstant,
-                        error.ArgumentCountMismatch,
-                        error.NoMatchingOverload,
-                        error.CannotPeformFieldAccess,
-                        error.ArrayIndexOutOfBounds,
-                        error.ExpressionNotIndexable,
-                        error.ExpectedConstantExpression,
-                        error.NoFieldInStruct,
-                        => {},
-                        else => return e,
-                    }
-                };
+                try sema.analyseProcedure(ast, decl);
             },
             .variable_decl => {
                 try sema.analyseVariableDecl(ast, decl);
             },
             .struct_definition => {
-                sema.analyseStructDefinition(ast, decl) catch |e| {
-                    switch (e) {
-                        else => return e,
-                    }
-                };
+                try sema.analyseStructDefinition(ast, decl);
             },
             else => {},
         }
@@ -61,10 +41,90 @@ pub fn analyse(sema: *Sema, ast: Ast, allocator: std.mem.Allocator) ![]Ast.Error
 
 pub fn analyseVariableDecl(self: *Sema, ast: Ast, node: Ast.NodePointer) !void {
     const variable_decl = node.data(Ast.Node.VariableDecl);
-    const variable_type = try self.resolveTypeFromTypeExpr(
+    const type_qualifier_ptr: Ast.NodePointer = .relativeFrom(node, variable_decl.qualifier);
+    const type_qualifier = type_qualifier_ptr.data(Ast.Node.TypeQualifier);
+    var qualifier: ValueQualifier = .in;
+
+    for (type_qualifier.tokens) |token| {
+        qualifier = switch (token.tag) {
+            .keyword_inout => .inout,
+            .keyword_out => .out,
+            .keyword_in => .in,
+            .keyword_const => .constant,
+            .invalid => .in,
+            else => qualifier,
+        };
+    }
+
+    var variable_type = try self.resolveTypeFromTypeExpr(
         ast,
         .relativeFrom(node, variable_decl.type_expr),
     );
+
+    if (variable_decl.array_len_specifier != Ast.NodeRelativePointer.nil) {
+        const array_len_specifier: Ast.NodePointer = .relativeFrom(node, variable_decl.array_len_specifier);
+
+        const array_len_expr = try self.analyseExpression(
+            ast,
+            array_len_specifier,
+            .{ .try_resolve_constant_expression = true },
+        );
+
+        if (coerceTypeAssign(.uint, array_len_expr.type_index) == .erroring) {
+            @panic("TODO: emit error");
+        }
+
+        if (array_len_expr.constant_value) |array_len_value| {
+            const array_len: u64 = array_len_value.value_bits;
+
+            variable_type = .array(variable_type, @intCast(array_len));
+        } else {
+            variable_type = .erroring;
+
+            try self.errors.append(self.gpa, .{
+                .anchor = .{ .node = array_len_specifier },
+                .tag = .expected_constant_expression,
+            });
+        }
+    }
+
+    var initial_value: ?ConstantValue = null;
+
+    if (variable_decl.initializer != Ast.NodeRelativePointer.nil) {
+        const initializer_node: Ast.NodePointer = .relativeFrom(node, variable_decl.initializer);
+
+        const initializer_expr = try self.analyseExpression(
+            ast,
+            initializer_node,
+            .{ .try_resolve_constant_expression = true },
+        );
+
+        switch (coerceTypeAssign(variable_type, initializer_expr.type_index)) {
+            .erroring => {
+                @branchHint(.cold);
+
+                try self.errors.append(self.gpa, .{
+                    .anchor = .{
+                        .node = initializer_node,
+                    },
+                    .tag = .type_mismatch,
+                    .data = .{
+                        .type_mismatch = .{
+                            .lhs_type = variable_type,
+                            .rhs_type = initializer_expr.type_index,
+                        },
+                    },
+                });
+            },
+            else => {},
+        }
+
+        initial_value = constantExprConvertType(
+            variable_type,
+            initializer_expr.type_index,
+            initializer_expr.constant_value.?,
+        );
+    }
 
     const lowered_type = try self.lowerType(variable_type);
 
@@ -79,9 +139,9 @@ pub fn analyseVariableDecl(self: *Sema, ast: Ast, node: Ast.NodePointer) !void {
         ast,
         variable_decl.name,
         variable_type,
-        .in,
+        qualifier,
         ir_node,
-        null,
+        initial_value,
     );
 }
 
@@ -275,8 +335,6 @@ pub fn analyseProcedure(
                     },
                 },
             });
-
-            return error.IdentifierAlreadyDefined;
         }
     } else {
         procedure_index = @enumFromInt(@as(u32, @intCast(self.procedures.items.len)));
@@ -323,39 +381,40 @@ pub fn analyseStatement(
 
             if (var_init.array_length_specifier != Ast.NodeRelativePointer.nil) blk: {
                 const array_len_expr: Ast.NodePointer = .relativeFrom(statement_node, var_init.array_length_specifier);
-                //TODO: this generates ir for expressions we know must be constants, and this is wasteful
-                const array_len_type = try self.analyseExpression(ast, array_len_expr);
+                const array_len_type = try self.analyseExpression(
+                    ast,
+                    array_len_expr,
+                    .{ .try_resolve_constant_expression = true },
+                );
 
                 if (array_len_type.type_index == .erroring) {
                     type_index = .erroring;
                     break :blk;
                 }
 
-                const maybe_array_length = self.resolveConstantExpression(ast, array_len_expr) catch |e| {
-                    switch (e) {
-                        error.ConstantEvaluationFailed => {
-                            try self.errors.append(self.gpa, .{
-                                .anchor = .{ .node = array_len_expr },
-                                .tag = .expected_constant_expression,
-                            });
-                            return;
-                        },
-                        else => return e,
-                    }
-                };
-
-                if (maybe_array_length) |array_length| {
-                    type_index = .array(type_index, @intCast(array_length));
+                if (array_len_type.constant_value) |array_length_value| {
+                    type_index = .array(type_index, @intCast(array_length_value.value_bits));
                 } else {
                     type_index = .erroring;
+
+                    try self.errors.append(self.gpa, .{
+                        .anchor = .{ .node = array_len_expr },
+                        .tag = .expected_constant_expression,
+                    });
                 }
             }
 
-            var initial_value: ?u64 = null;
+            var initial_value: ?ConstantValue = null;
             var ir_node: spirv.Ir.Node = .nil;
 
             if (var_init.expression != Ast.NodeRelativePointer.nil) {
-                const expression_result = try self.analyseExpression(ast, .relativeFrom(statement_node, var_init.expression));
+                const expression_result = switch (var_init.qualifier.tag == .keyword_const) {
+                    inline else => |is_const| try self.analyseExpression(
+                        ast,
+                        .relativeFrom(statement_node, var_init.expression),
+                        .{ .try_resolve_constant_expression = is_const },
+                    ),
+                };
 
                 ir_node = expression_result.ir_node;
 
@@ -376,8 +435,12 @@ pub fn analyseStatement(
                     });
                 }
 
-                if (var_init.qualifier.tag == .keyword_const and expression_result.type_index.toData().literal == 1) {
-                    initial_value = try self.resolveConstantExpression(ast, .relativeFrom(statement_node, var_init.expression));
+                if (var_init.qualifier.tag == .keyword_const and expression_result.constant_value != null) {
+                    initial_value = constantExprConvertType(
+                        coerced_type,
+                        expression_result.type_index,
+                        expression_result.constant_value.?,
+                    );
                 }
 
                 ir_node = try self.lowerTypeConversion(
@@ -407,6 +470,7 @@ pub fn analyseStatement(
             const condition_type = try self.analyseExpression(
                 ast,
                 .relativeFrom(statement_node, statement_if.condition_expression),
+                .{},
             );
 
             _ = switch (coerceType(.bool, condition_type.type_index)) {
@@ -463,7 +527,7 @@ pub fn analyseStatement(
         .expression_binary_assign_bitwise_shift_left,
         .expression_binary_assign_bitwise_shift_right,
         => {
-            _ = try self.analyseExpression(ast, statement_node);
+            _ = try self.analyseExpression(ast, statement_node, .{});
         },
         .statement_return => {
             const statement_return = statement_node.data(Ast.Node.StatementReturn);
@@ -475,6 +539,7 @@ pub fn analyseStatement(
                 const expr_result = try self.analyseExpression(
                     ast,
                     .relativeFrom(statement_node, statement_return.expression),
+                    .{},
                 );
 
                 expr_type = expr_result.type_index;
@@ -655,7 +720,7 @@ pub fn analyseArgList(
         else => {
             const position = state.base_position;
 
-            const expr_type = try self.analyseExpression(ast, node);
+            const expr_type = try self.analyseExpression(ast, node, .{});
 
             var expr_type_prim: TypeIndex.TypeIndexData = @bitCast(@intFromEnum(expr_type.type_index));
 
@@ -695,22 +760,22 @@ pub fn scopeDefine(
     type_index: TypeIndex,
     qualifier: ValueQualifier,
     ir_node: spirv.Ir.Node,
-    initial_value: ?u64,
+    initial_value: ?ConstantValue,
 ) !void {
     const scope = &self.scope_stack.items[self.scope_stack.items.len - 1];
 
     const identifier_string = ast.tokenString(identifier_token);
 
     if (reserved_identifiers.get(identifier_string)) |_| {
+        @branchHint(.cold);
         try self.errors.append(self.gpa, .{
             .tag = .reserved_keyword_token,
             .anchor = .{ .token = identifier_token },
         });
-
-        return error.IdentifierAlreadyDefined;
     }
 
     if (scope.identifiers.get(identifier_string)) |original_definition| {
+        @branchHint(.cold);
         try self.errors.append(self.gpa, .{
             .tag = .identifier_redefined,
             .anchor = .{ .token = identifier_token },
@@ -721,8 +786,6 @@ pub fn scopeDefine(
                 },
             },
         });
-
-        return error.IdentifierAlreadyDefined;
     }
 
     try scope.identifiers.put(self.gpa, identifier_string, .{
@@ -811,14 +874,30 @@ pub fn resolveTypeFromIdentifierNoError(self: *Sema, ast: Ast, type_expr_token: 
     };
 }
 
-pub const AnalyseExpressionResult = struct {
-    type_index: TypeIndex,
-    ir_node: spirv.Ir.Node,
+pub const ConstantValue = packed struct {
+    value_bits: u64,
 };
 
-pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !AnalyseExpressionResult {
+pub const AnalyseExpressionResult = struct {
+    ir_node: spirv.Ir.Node,
+    type_index: TypeIndex,
+    constant_value: ?ConstantValue,
+};
+
+pub fn analyseExpression(
+    self: *Sema,
+    ast: Ast,
+    expression: Ast.NodePointer,
+    comptime options: struct {
+        try_resolve_constant_expression: bool = false,
+    },
+) !AnalyseExpressionResult {
     if (expression == Ast.NodePointer.nil) {
-        return .{ .ir_node = .nil, .type_index = .void };
+        return .{
+            .ir_node = .nil,
+            .type_index = .void,
+            .constant_value = null,
+        };
     }
 
     switch (expression.tag) {
@@ -826,6 +905,7 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
             .type_index = .literal_bool,
             //TODO: generate IR
             .ir_node = .nil,
+            .constant_value = null,
         },
         .expression_literal_number => {
             const number_literal_data = expression.data(Ast.Node.ExpressionLiteralNumber);
@@ -837,9 +917,16 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
                     .value_bits = @truncate(int_value),
                 });
 
+                var constant_value: ?ConstantValue = null;
+
+                if (options.try_resolve_constant_expression) {
+                    constant_value = .{ .value_bits = int_value };
+                }
+
                 return .{
                     .type_index = .literal_uint,
                     .ir_node = ir_node,
+                    .constant_value = constant_value,
                 };
             } else |e| {
                 switch (e) {
@@ -855,9 +942,16 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
                     .value_bits = @truncate(value),
                 });
 
+                var constant_value: ?ConstantValue = null;
+
+                if (options.try_resolve_constant_expression) {
+                    constant_value = .{ .value_bits = @bitCast(int_value) };
+                }
+
                 return .{
                     .type_index = .literal_int,
                     .ir_node = ir_node,
+                    .constant_value = constant_value,
                 };
             } else |e| {
                 switch (e) {
@@ -873,9 +967,16 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
                     .value_bits = @bitCast(f32_val),
                 });
 
+                var constant_value: ?ConstantValue = null;
+
+                if (options.try_resolve_constant_expression) {
+                    constant_value = .{ .value_bits = @bitCast(float_value) };
+                }
+
                 return .{
                     .type_index = .literal_float,
                     .ir_node = ir_node,
+                    .constant_value = constant_value,
                 };
             } else |e| {
                 switch (e) {
@@ -894,8 +995,16 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
         => {
             const binary_expr = expression.data(Ast.Node.BinaryExpression);
 
-            const lhs_type = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.left));
-            const rhs_type = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.right));
+            const lhs_type = try self.analyseExpression(
+                ast,
+                .relativeFrom(expression, binary_expr.left),
+                options,
+            );
+            const rhs_type = try self.analyseExpression(
+                ast,
+                .relativeFrom(expression, binary_expr.right),
+                options,
+            );
 
             const comparison_type = coerceType(lhs_type.type_index, rhs_type.type_index);
 
@@ -911,11 +1020,9 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
                         },
                     },
                 });
-
-                return error.TypeMismatch;
             }
 
-            if (!comparison_type.isOperatorDefined(expression.tag)) {
+            if (!comparison_type.isOperatorDefined(expression.tag) and comparison_type.toData().non_erroring) {
                 try self.errors.append(self.gpa, .{
                     .tag = .type_incompatibility,
                     .anchor = .{ .node = expression },
@@ -926,32 +1033,64 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
                         },
                     },
                 });
+            }
 
-                return error.TypeIncompatibilty;
+            var constant_value: ?ConstantValue = null;
+
+            if (options.try_resolve_constant_expression) {
+                if (lhs_type.constant_value != null and rhs_type.constant_value != null) {
+                    const lhs_value: ConstantValue = lhs_type.constant_value.?;
+                    const rhs_value: ConstantValue = rhs_type.constant_value.?;
+
+                    switch (expression.tag) {
+                        .expression_binary_eql => {
+                            constant_value = .{ .value_bits = @intFromBool(lhs_value == rhs_value) };
+                        },
+                        .expression_binary_neql => {
+                            constant_value = .{ .value_bits = @intFromBool(lhs_value != rhs_value) };
+                        },
+                        else => {},
+                    }
+                }
             }
 
             return .{
                 .type_index = .bool,
                 .ir_node = .nil,
+                .constant_value = constant_value,
             };
         },
         .expression_binary_add,
         .expression_binary_sub,
         .expression_binary_mul,
         .expression_binary_div,
+        .expression_binary_bitwise_or,
+        .expression_binary_bitwise_and,
         .expression_binary_bitwise_xor,
         .expression_binary_bitwise_shift_left,
         .expression_binary_bitwise_shift_right,
         => {
             const binary_expr = expression.data(Ast.Node.BinaryExpression);
 
-            const lhs = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.left));
-            const rhs = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.right));
+            const lhs = try self.analyseExpression(
+                ast,
+                .relativeFrom(expression, binary_expr.left),
+                options,
+            );
+            const rhs = try self.analyseExpression(
+                ast,
+                .relativeFrom(expression, binary_expr.right),
+                options,
+            );
 
             const coerced_type: TypeIndex = switch (expression.tag) {
-                .expression_binary_mul, .expression_binary_div => coerceTypeMul(lhs.type_index, rhs.type_index),
+                .expression_binary_mul,
+                .expression_binary_div,
+                => coerceTypeMul(lhs.type_index, rhs.type_index),
                 else => coerceType(lhs.type_index, rhs.type_index),
             };
+
+            var is_erroring: bool = false;
 
             if (coerced_type == .erroring) {
                 @branchHint(.cold);
@@ -965,6 +1104,8 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
                         },
                     },
                 });
+
+                is_erroring = true;
             }
 
             const resultant_type = coerced_type;
@@ -981,7 +1122,7 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
                     },
                 });
 
-                return error.TypeIncompatibilty;
+                is_erroring = true;
             }
 
             var ir_node: spirv.Ir.Node = .nil;
@@ -999,9 +1140,29 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
                 else => {},
             }
 
+            var constant_value: ?ConstantValue = null;
+
+            if (options.try_resolve_constant_expression and !is_erroring) blk: {
+                if (lhs.constant_value == null or rhs.constant_value == null) break :blk;
+
+                switch (expression.tag) {
+                    inline else => |node_tag| {
+                        constant_value = constantExprOp(
+                            node_tag,
+                            coerced_type,
+                            lhs.type_index,
+                            lhs.constant_value.?,
+                            rhs.type_index,
+                            rhs.constant_value.?,
+                        );
+                    },
+                }
+            }
+
             return .{
                 .type_index = resultant_type,
                 .ir_node = ir_node,
+                .constant_value = constant_value,
             };
         },
         .expression_binary_assign,
@@ -1009,13 +1170,24 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
         .expression_binary_assign_sub,
         .expression_binary_assign_mul,
         .expression_binary_assign_div,
+        .expression_binary_assign_bitwise_and,
+        .expression_binary_assign_bitwise_or,
+        .expression_binary_assign_bitwise_xor,
         .expression_binary_assign_bitwise_shift_left,
         .expression_binary_assign_bitwise_shift_right,
         => {
             const binary_expr = expression.data(Ast.Node.BinaryExpression);
 
-            const lhs_type = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.left));
-            const rhs_type = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.right));
+            const lhs_type = try self.analyseExpression(
+                ast,
+                .relativeFrom(expression, binary_expr.left),
+                options,
+            );
+            const rhs_type = try self.analyseExpression(
+                ast,
+                .relativeFrom(expression, binary_expr.right),
+                options,
+            );
 
             const assignable = try self.isExpressionAssignable(ast, .relativeFrom(expression, binary_expr.left));
 
@@ -1111,12 +1283,17 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
             return .{
                 .type_index = resultant_type,
                 .ir_node = ir_node,
+                .constant_value = null,
             };
         },
         .expression_unary_minus => {
             const binary_expr = expression.data(Ast.Node.BinaryExpression);
 
-            const rhs_type = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.right));
+            const rhs_type = try self.analyseExpression(
+                ast,
+                .relativeFrom(expression, binary_expr.right),
+                options,
+            );
 
             if (!rhs_type.type_index.isOperatorDefined(expression.tag) and rhs_type.type_index != .erroring) {
                 try self.errors.append(self.gpa, .{
@@ -1137,28 +1314,28 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
                 rhs_type.ir_node,
             );
 
+            var constant_value: ?ConstantValue = null;
+
+            if (options.try_resolve_constant_expression) {
+                constant_value = null;
+            }
+
             return .{
                 .type_index = rhs_type.type_index,
                 .ir_node = ir_node,
+                .constant_value = constant_value,
             };
         },
         .expression_identifier => {
             const identifier = expression.data(Ast.Node.Identifier);
 
             const definition = try self.scopeResolve(ast, identifier.token) orelse {
-                return .{ .ir_node = .nil, .type_index = .erroring };
-            };
-
-            if (definition.initial_value != null) {
-                var result_type = definition.type_index.toData();
-
-                result_type.literal = 1;
-
                 return .{
-                    .type_index = @enumFromInt(@as(u64, @bitCast(result_type))),
-                    .ir_node = definition.ir_node,
+                    .ir_node = .nil,
+                    .type_index = .erroring,
+                    .constant_value = null,
                 };
-            }
+            };
 
             var ir_node = definition.ir_node;
 
@@ -1166,19 +1343,46 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
                 switch (self.spirv_ir.nodeTag(ir_node).*) {
                     .variable => {
                         const lowered_type = try self.lowerType(definition.type_index);
-                        ir_node = try self.spirv_ir.buildNodeOpLoad(
-                            self.gpa,
-                            lowered_type,
-                            ir_node,
-                        );
+
+                        if (definition.qualifier == .constant and definition.initial_value != null) {
+                            ir_node = try self.lowerConstantValue(
+                                definition.type_index,
+                                definition.initial_value.?,
+                            );
+                        } else {
+                            ir_node = try self.spirv_ir.buildNodeOpLoad(
+                                self.gpa,
+                                lowered_type,
+                                ir_node,
+                            );
+                        }
                     },
-                    else => {},
+                    else => {
+                        if (definition.initial_value != null) {
+                            var result_type = definition.type_index.toData();
+
+                            result_type.literal = 1;
+
+                            return .{
+                                .type_index = @enumFromInt(@as(u64, @bitCast(result_type))),
+                                .ir_node = definition.ir_node,
+                                .constant_value = null,
+                            };
+                        }
+                    },
                 }
+            }
+
+            var constant_value: ?ConstantValue = null;
+
+            if (definition.qualifier == .constant and definition.initial_value != null) {
+                constant_value = definition.initial_value.?;
             }
 
             return .{
                 .type_index = definition.type_index,
                 .ir_node = ir_node,
+                .constant_value = constant_value,
             };
         },
         .expression_binary_proc_call => {
@@ -1194,6 +1398,7 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
                 return .{
                     .type_index = type_for_constructor,
                     .ir_node = .nil,
+                    .constant_value = null,
                 };
             }
 
@@ -1208,12 +1413,17 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
             return .{
                 .type_index = if (procedure != null) procedure.?.general_data.return_type else .erroring,
                 .ir_node = .nil,
+                .constant_value = null,
             };
         },
         .expression_binary_field_access => {
             const binary_expr = expression.data(Ast.Node.BinaryExpression);
 
-            const lhs_type = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.left));
+            const lhs_type = try self.analyseExpression(
+                ast,
+                .relativeFrom(expression, binary_expr.left),
+                options,
+            );
             const rhs_ptr: Ast.NodePointer = .relativeFrom(expression, binary_expr.right);
             const rhs_identifier = rhs_ptr.data(Ast.Node.Identifier);
 
@@ -1227,7 +1437,11 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
                     },
                 });
 
-                return .{ .ir_node = .nil, .type_index = .erroring };
+                return .{
+                    .ir_node = .nil,
+                    .type_index = .erroring,
+                    .constant_value = null,
+                };
             }
 
             const type_data = self.types.items[lhs_type.type_index.toAggregateIndex().?];
@@ -1235,7 +1449,11 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
             const maybe_field = type_data.@"struct".fields.get(ast.tokenString(rhs_identifier.token));
 
             if (maybe_field) |field| {
-                return .{ .type_index = field.type_index, .ir_node = .nil };
+                return .{
+                    .type_index = field.type_index,
+                    .ir_node = .nil,
+                    .constant_value = null,
+                };
             }
 
             try self.errors.append(self.gpa, .{
@@ -1250,13 +1468,25 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
                 },
             });
 
-            return .{ .ir_node = .nil, .type_index = .erroring };
+            return .{
+                .ir_node = .nil,
+                .type_index = .erroring,
+                .constant_value = null,
+            };
         },
         .expression_binary_array_access => {
             const binary_expr = expression.data(Ast.Node.BinaryExpression);
 
-            const lhs_type = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.left));
-            const rhs_type = try self.analyseExpression(ast, .relativeFrom(expression, binary_expr.right));
+            const lhs_type = try self.analyseExpression(
+                ast,
+                .relativeFrom(expression, binary_expr.left),
+                options,
+            );
+            const rhs_type = try self.analyseExpression(
+                ast,
+                .relativeFrom(expression, binary_expr.right),
+                .{ .try_resolve_constant_expression = true },
+            );
 
             if (lhs_type.type_index != .erroring and !lhs_type.type_index.isArray()) {
                 try self.errors.append(self.gpa, .{
@@ -1265,19 +1495,14 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
                 });
             }
 
-            if (rhs_type.type_index != .erroring and lhs_type.type_index != .erroring and rhs_type.type_index.toData().literal == 1) {
-                const array_index = try self.resolveConstantExpression(
-                    ast,
-                    .relativeFrom(expression, binary_expr.right),
-                );
-
-                if (array_index != null and array_index.? >= lhs_type.type_index.toData().array_length) {
+            if (rhs_type.type_index != .erroring and lhs_type.type_index != .erroring) {
+                if (rhs_type.constant_value != null and rhs_type.constant_value.?.value_bits >= lhs_type.type_index.toData().array_length) {
                     try self.errors.append(self.gpa, .{
                         .anchor = .{ .node = .relativeFrom(expression, binary_expr.right) },
                         .tag = .array_access_out_of_bounds,
                         .data = .{ .array_index_out_of_bounds = .{
                             .array_length = lhs_type.type_index.toData().array_length,
-                            .index = @intCast(array_index.?),
+                            .index = @intCast(rhs_type.constant_value.?.value_bits),
                         } },
                     });
                 }
@@ -1286,53 +1511,10 @@ pub fn analyseExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !An
             return .{
                 .type_index = lhs_type.type_index.arrayElemType(),
                 .ir_node = .nil,
+                .constant_value = null,
             };
         },
         else => @panic(@tagName(expression.tag)),
-    }
-}
-
-pub fn resolveConstantExpression(self: *Sema, ast: Ast, expression: Ast.NodePointer) !?u64 {
-    switch (expression.tag) {
-        .expression_binary_add,
-        .expression_binary_sub,
-        .expression_binary_mul,
-        .expression_binary_div,
-        => {
-            const add_expr = expression.data(Ast.Node.BinaryExpression);
-
-            const maybe_lhs = try self.resolveConstantExpression(ast, .relativeFrom(expression, add_expr.left));
-            const maybe_rhs = try self.resolveConstantExpression(ast, .relativeFrom(expression, add_expr.right));
-
-            const lhs = maybe_lhs orelse return null;
-            const rhs = maybe_rhs orelse return null;
-
-            return switch (expression.tag) {
-                .expression_binary_add => lhs + rhs,
-                .expression_binary_sub => lhs - rhs,
-                .expression_binary_mul => lhs * rhs,
-                .expression_binary_div => lhs / rhs,
-                else => unreachable,
-            };
-        },
-        .expression_literal_number => {
-            const literal_number_node = expression.data(Ast.Node.ExpressionLiteralNumber);
-
-            const value = try std.fmt.parseInt(u64, ast.tokenString(literal_number_node.token), 0);
-
-            return value;
-        },
-        .expression_identifier => {
-            const identifier_node = expression.data(Ast.Node.Identifier);
-
-            const resolved_definition = try self.scopeResolve(
-                ast,
-                identifier_node.token,
-            ) orelse return 0;
-
-            return resolved_definition.initial_value orelse return error.ConstantEvaluationFailed;
-        },
-        else => @panic("TODO: implement error message"),
     }
 }
 
@@ -1497,6 +1679,152 @@ pub fn printTypeName(self: Sema, ast: Ast, writer: *std.Io.Writer, type_index: T
             return try writer.writeAll(ast.tokenString(struct_data.name));
         },
     }
+}
+
+pub fn constantExprOp(
+    comptime node_tag: Ast.Node.Tag,
+    op_type: TypeIndex,
+    lhs_type: TypeIndex,
+    lhs: ConstantValue,
+    rhs_type: TypeIndex,
+    rhs: ConstantValue,
+) ConstantValue {
+    const lhs_converted = constantExprConvertType(op_type, lhs_type, lhs);
+    const rhs_converted = constantExprConvertType(op_type, rhs_type, rhs);
+    switch (op_type.toData().scalar_type) {
+        .double, .float => {
+            const lhs_f64: f64 = @bitCast(lhs_converted.value_bits);
+            const rhs_f64: f64 = @bitCast(rhs_converted.value_bits);
+
+            const result = comptimeValueOp(node_tag, lhs_f64, rhs_f64);
+
+            return .{ .value_bits = result };
+        },
+        .integer => {
+            return .{ .value_bits = comptimeValueOp(
+                node_tag,
+                lhs_converted.value_bits,
+                rhs_converted.value_bits,
+            ) };
+        },
+        .bool => {
+            return .{ .value_bits = comptimeValueOp(
+                node_tag,
+                lhs_converted.value_bits != 0,
+                rhs_converted.value_bits != 0,
+            ) };
+        },
+    }
+}
+
+pub fn comptimeValueOp(comptime op_node_tag: Ast.Node.Tag, lhs: anytype, rhs: anytype) u64 {
+    const type_info = @typeInfo(@TypeOf(lhs, rhs));
+
+    switch (type_info) {
+        .float => {
+            return switch (op_node_tag) {
+                .expression_binary_add => @bitCast(lhs + rhs),
+                .expression_binary_sub => @bitCast(lhs - rhs),
+                .expression_binary_mul => @bitCast(lhs * rhs),
+                .expression_binary_div => @bitCast(lhs / rhs),
+                .expression_binary_eql => @intFromBool(lhs == rhs),
+                .expression_binary_neql => @intFromBool(lhs != rhs),
+                .expression_binary_leql => @intFromBool(lhs <= rhs),
+                .expression_binary_geql => @intFromBool(lhs >= rhs),
+                .expression_binary_lt => @intFromBool(lhs < rhs),
+                .expression_binary_gt => @intFromBool(lhs > rhs),
+                else => @panic(@tagName(op_node_tag)),
+            };
+        },
+        .int => {
+            return switch (op_node_tag) {
+                .expression_binary_add => lhs +% rhs,
+                .expression_binary_sub => lhs -% rhs,
+                .expression_binary_mul => lhs *% rhs,
+                .expression_binary_div => @divTrunc(lhs, rhs),
+                .expression_binary_bitwise_shift_left => lhs << @truncate(rhs),
+                .expression_binary_bitwise_shift_right => lhs >> @truncate(rhs),
+                .expression_binary_bitwise_xor => lhs ^ rhs,
+                .expression_binary_bitwise_or => lhs | rhs,
+                .expression_binary_bitwise_and => lhs & rhs,
+                .expression_binary_eql => @intFromBool(lhs == rhs),
+                .expression_binary_neql => @intFromBool(lhs != rhs),
+                .expression_binary_leql => @intFromBool(lhs <= rhs),
+                .expression_binary_geql => @intFromBool(lhs >= rhs),
+                .expression_binary_lt => @intFromBool(lhs < rhs),
+                .expression_binary_gt => @intFromBool(lhs > rhs),
+                else => @panic(@tagName(op_node_tag)),
+            };
+        },
+        .bool => {
+            return switch (op_node_tag) {
+                .expression_binary_eql => @intFromBool(lhs == rhs),
+                .expression_binary_neql => @intFromBool(lhs != rhs),
+                .expression_binary_boolean_and => @intFromBool(lhs and rhs),
+                .expression_binary_boolean_or => @intFromBool(lhs or rhs),
+                .expression_binary_boolean_xor => @intFromBool(@intFromBool(lhs) ^ @intFromBool(rhs) != 0),
+                else => @panic(@tagName(op_node_tag)),
+            };
+        },
+        else => {
+            return undefined;
+        },
+    }
+}
+
+pub fn constantExprConvertType(
+    to_type: TypeIndex,
+    from_type: TypeIndex,
+    constant_value: ConstantValue,
+) ConstantValue {
+    if (to_type == from_type) {
+        return constant_value;
+    }
+
+    if (to_type.toData().scalar_type == .float and
+        from_type.toData().scalar_type == .integer)
+    {
+        const value_u64: u64 = constant_value.value_bits;
+
+        const value_f64: f64 = @floatFromInt(value_u64);
+
+        return .{ .value_bits = @bitCast(value_f64) };
+    }
+
+    return constant_value;
+}
+
+pub fn lowerConstantValue(
+    self: *Sema,
+    type_index: TypeIndex,
+    value: ConstantValue,
+) !spirv.Ir.Node {
+    if (self.errors.items.len != 0) return .nil;
+
+    const lowered_type = try self.lowerType(type_index);
+
+    if (type_index.isScalar()) {
+        var value_bits: u32 = undefined;
+        switch (type_index.toData().scalar_type) {
+            .float, .double => {
+                const value_float: f64 = @bitCast(value.value_bits);
+                const value_f32: f32 = @floatCast(value_float);
+
+                value_bits = @bitCast(value_f32);
+            },
+            .integer => {
+                value_bits = @intCast(value.value_bits);
+            },
+            else => {},
+        }
+
+        return try self.spirv_ir.buildNodeOpConstant(self.gpa, .{
+            .type = lowered_type,
+            .value_bits = value_bits,
+        });
+    }
+
+    return .nil;
 }
 
 pub fn lowerOperatorAdd(
@@ -1685,7 +2013,7 @@ pub const IdentifierDefinition = struct {
     token_index: Ast.TokenIndex,
     type_index: TypeIndex,
     qualifier: ValueQualifier,
-    initial_value: ?u64,
+    initial_value: ?ConstantValue,
     ir_node: spirv.Ir.Node,
 };
 
@@ -2177,6 +2505,8 @@ pub const TypeIndex = enum(u64) {
 
                 return true;
             },
+            .expression_binary_bitwise_or,
+            .expression_binary_bitwise_and,
             .expression_binary_bitwise_xor,
             .expression_binary_bitwise_shift_left,
             .expression_binary_bitwise_shift_right,
